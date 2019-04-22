@@ -365,30 +365,23 @@ def main():
 
     sample_size = 5000
 
+    diag_dir = resource_filename('eiafcst', os.path.join('models', 'diagnostic'))
+    res_fname = os.path.join(diag_dir, 'results.csv')
+
     # Record results always
-    if not os.path.exists('results.csv'):
-        with open('results.csv', 'w') as results_file:
+    if not os.path.exists(res_fname):
+        with open(res_fname, 'w') as results_file:
             results_file.write(','.join(['samplesize', 'lr', 'L1', 'L2', 'patience',
                                          'embedsize', 'mae', 'mse', 'mean train residual', 'mean test residual']))
             results_file.write('\n')
 
-    with open('results.csv', 'a') as outfile:
+    with open(res_fname, 'a') as outfile:
         results = run(args.traindata, args.lr, args.L1, args.L2, args.epochs, args.patience,
                       args.model, args.embedsize, sample_size=sample_size, plots=True)
 
         argline = ','.join(str(a) for a in [sample_size, args.lr, args.L1, args.L2, args.patience, args.embedsize])
         outfile.write(argline + ',' + ','.join([str(r) for r in results]))
         outfile.write('\n')
-
-        # for i in range(32):
-        #     args.L1 = i+1
-        #     args.L2 = i+1
-        #     results = run(args.traindata, args.lr, args.L1, args.L2, args.epochs, args.patience,
-        #                   args.model, args.embedsize, sample_size=sample_size)
-        #     argline = ','.join(str(a) for a in [sample_size, args.lr, args.L1, args.L2, args.patience, args.embedsize])
-        #     outfile.write(argline + ',' + ','.join([str(r) for r in results]))
-        #     outfile.write('\n')
-        #     keras.backend.clear_session()
 
         print(f'Done in {time.time() - st} seconds.')
 
