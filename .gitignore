@@ -3,6 +3,9 @@ eiafcst/data/diagnostic/*.csv
 eiafcst/data/form714-database/*[.xls, .csv, .pdf]
 eiafcst/data/raw_data/*[.xlsx, .xls, .h5, .csv]
 
+eiafcst/data/raw_data/temperature/gpw*
+eiafcst/data/raw_data/temperature/*.nc
+
 eiafcst/models/diagnostic/*[.png, .csv]
 
 
