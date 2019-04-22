@@ -1,0 +1,49 @@
+# Large data files
+eiafcst/data/diagnostic/*.csv
+eiafcst/data/form714-database/*[.xls, .csv, .pdf]
+eiafcst/data/raw_data/*[.xlsx, .xls, .h5, .csv]
+
+
+
+# OSX files
+.DS_Store
+
+### PYTHON SPECIFIC IGNORES
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
