@@ -5,6 +5,7 @@ Caleb Braun
 4/22/19
 """
 import pandas as pd
+import numpy as np
 
 
 def add_quarter_and_week(df, datecol):
@@ -47,3 +48,35 @@ def agg_to_year(df, key_cols=['NERC Region', 'Master BA Name', 'Abbreviated PCA 
     df = df.groupby(key_cols, as_index=False).agg({'Load (MW)': 'sum'})
 
     return df
+
+
+def read_training_data(f, prec='float32'):
+    """
+    Read in a training dataset for modeling.
+
+    Generally, we don't need float64 precision, so we can reduce it for efficiency.
+
+    :param f:      path to .pkl or .csv file containing tidy dataset
+    :param prec:   precision for numeric variables
+    """
+    if f.endswith('.csv'):
+        dataset = pd.read_csv(f)
+    else:
+        dataset = pd.read_pickle(f)
+
+    # Convert float columns to specified precision
+    float_cols = (dataset.dtypes == np.float)
+    dataset.loc[:, float_cols] = dataset.loc[:, float_cols].astype(prec)
+
+    # Convert date/time column to datetime
+    time_col = dataset.columns.str.lower().isin(['date', 'time'])
+
+    if any(time_col):
+        time_col = list(dataset.columns[time_col])[0]
+        dataset.loc[:, time_col] = pd.to_datetime(dataset[time_col], utc=True, infer_datetime_format=True)
+
+    return dataset
+
+
+def merge_temperature(df, temp_df):
+    pd.merge(df, temp_df)

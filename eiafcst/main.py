@@ -6,6 +6,7 @@ Caleb Braun
 """
 from dataprep import electricity
 from dataprep import natural_gas
+from models import model_gas
 from pkg_resources import resource_filename
 import argparse
 import os
@@ -16,6 +17,7 @@ def get_args():
     parser = argparse.ArgumentParser()
 
     parser.add_argument("outdir", type=str, help="Directory for data outputs")
+    parser.add_argument("-g", action="save_true", help="Run gas model")
     # parser.add_argument('-L1', type=int,
     #                     help='The number of units in the first hidden layer (int) [default: 16]',
     #                     default=16)
@@ -43,8 +45,13 @@ def main():
     if not os.path.exists(args.outdir):
         raise NotADirectoryError
 
-    ngas = natural_gas.main()
-    ngas.to_csv('gas_hourly_by_state.csv', index=False)
+    if args.g:
+        if not os.path.isfile('gas_hourly_by_state.csv'):
+            print('Preparing natural gas dataset...')
+            ngas = natural_gas.main()
+            ngas.to_csv('gas_hourly_by_state.csv', index=False)
+
+        model_gas.main()
     return
 
     df = electricity.build_electricity_dataset()
