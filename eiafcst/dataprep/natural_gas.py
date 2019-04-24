@@ -6,11 +6,11 @@ Caleb Braun
 """
 import os
 import pandas as pd
-from .utils import add_quarter_and_week
+from eiafcst.dataprep.utils import add_quarter_and_week, merge_temperature
 from pkg_resources import resource_filename
 
 
-def xlsx_to_csv():
+def read_natural_gas_xls():
     """
     Collect EIA natural gas data from original excel spreadsheets.
 
@@ -66,10 +66,16 @@ def month_to_day(df):
 
 
 def main():
-    gasdf = xlsx_to_csv()
+    gasdf = read_natural_gas_xls()
     gasdf.Date = pd.to_datetime(gasdf.Date)
     gasdf = month_to_day(gasdf)
     gasdf = add_quarter_and_week(gasdf, datecol='Date')
+
+    # Remove any incomplete weeks on the edges
+    gasdf = gasdf.groupby(['EconYear', 'quarter', 'week', 'State']).filter(lambda x: len(x) == 7)
+
+    # Now that we have complete economic weeks, aggregate to that level
+    gasdf = gasdf.groupby(['EconYear', 'quarter', 'week', 'State'], as_index=False).agg({'value': 'sum'})
 
     return gasdf
 
