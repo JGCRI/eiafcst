@@ -110,7 +110,20 @@ def add_shape_coord_from_data_array(xr_da, shp_path, coord_name):
     xr_da[coord_name] = rasterize(shapes, xr_da.coords,
                                   longitude='longitude', latitude='latitude')
 
-    return xr_da, {idx: name for idx, name in enumerate(shp_gpd.NAME_ABBR)}
+    id_col = guess_id_column(shp_gpd)
+    return xr_da, {idx: name for idx, name in enumerate(shp_gpd.iloc[:, id_col])}
+
+
+def guess_id_column(df):
+    """Guess the index of the most useful identifying column of a DataFrame."""
+    cols = list(df.columns.str.lower())
+    try:
+        return cols.index('name')
+    except ValueError:
+        try:
+            return cols.index('id')
+        except ValueError:
+            return 0
 
 
 def read_global_pop(ncfile):
@@ -229,6 +242,9 @@ def aggregate_temperature(indir, years, region, shp, pop=None):
     with xr.open_mfdataset(nc_files) as ds:
         temperature = ds.to_array().squeeze()
 
+    # See hack note below
+    dc = temperature[:, temperature.latitude == 39, temperature.longitude == -77].values
+
     # Add the shapes in shp as a new element of the DataArray's coords, named
     # 'region'. This is a non-dimension coordinate, unlike time, lat, and lon.
     temperature, regmap = add_shape_coord_from_data_array(temperature, shp, 'region')
@@ -245,22 +261,35 @@ def aggregate_temperature(indir, years, region, shp, pop=None):
 
     # The work done above represents regions with integer encodings. Map back
     # to their actual string IDs using the region map returned above.
-    temperature = temperature.to_dataframe('temperature').reset_index()
-    temperature['ID'] = temperature.region.map(regmap)
+    tmp_df = temperature.to_dataframe('temperature').reset_index()
+    tmp_df['ID'] = tmp_df.region.map(regmap)
+    tmp_df = tmp_df[['ID', 'time', 'temperature']]
 
-    return temperature[['ID', 'time', 'temperature']]
+    # HACK alert! A common aggregation region is by state. The District of
+    # Columbia is smaller than the resolution of the temperature data, and does
+    # not get assigned to any cell. Rather than generalize this case, we will
+    # instead just take the values of the grid cell covering DC and tack them
+    # on to the end of the data. The assumption here is that if VA and MD are
+    # spatial regions, then DC should be one too.
+    if any(tmp_df.ID == 'Virginia') and any(tmp_df.ID == 'Maryland'):
+        dc_df = tmp_df[tmp_df.ID == 'Maryland'].copy()
+        dc_df.ID = 'District of Columbia'
+        dc_df.temperature = dc.flatten()
+        tmp_df = tmp_df.append(dc_df, sort=True).reset_index(drop=True)
+
+    return tmp_df
 
 
 def get_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('outfile', type=str, help='File name (.csv) for aggregate temperature outputs')
-    parser.add_argument('shp', type=str, help='Subregional shapefile')
-    parser.add_argument('-w', help='Weight by population', action='store_true')
+    parser.add_argument('outfile', type=str, help='file name (.csv) for aggregate temperature outputs')
+    parser.add_argument('shp', type=str, help='subregional shapefile')
+    parser.add_argument('-w', help='weight by population', action='store_true')
     # parser.add_argument('-timestep', help='Number of hours in each time step (default 24)', default=24)
-    parser.add_argument('-y1', help='Start year (default 2006)', default=2006)
-    parser.add_argument('-y2', help='Start year (default 2017)', default=2017)
+    parser.add_argument('-y1', type=int, help='start year (default 2006)', default=2006)
+    parser.add_argument('-y2', type=int, help='start year (default 2017)', default=2017)
 
     return parser.parse_args()
 
@@ -283,7 +312,7 @@ def main():
     hi_avg = aggregate_temperature(indir, years, 'hi', args.shp, pop=global_pop)
     ak_avg = aggregate_temperature(indir, years, 'ak', args.shp, pop=global_pop)
 
-    out = pd.concat([usa_avg, hi_avg])
+    out = pd.concat([usa_avg, hi_avg, ak_avg], sort=True)
     out = out.sort_values(['ID', 'time'])
 
     out_fname = args.outfile
