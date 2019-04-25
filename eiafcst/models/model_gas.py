@@ -17,6 +17,7 @@ from eiafcst.dataprep.utils import *
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
+from tensorflow.keras.utils import plot_model
 
 from pkg_resources import resource_filename
 
@@ -85,83 +86,113 @@ def plot_by_region(dataset):
         plt.clf()
 
 
-def prep_data(trainx, trainy, train_frac=0.8):
+def prep_data(xpth, ypth, train_frac=0.8):
     """
     Combine gas and temperature datasets and prepare them for the model.
 
-    :param trainx:      path to .pkl or .csv file containing temperature by hour
-    :param trainy:      path to .pkl or .csv file containing natural gas
+    :param xpth:        path to .pkl or .csv file containing temperature by hour
+    :param ypth:        path to .pkl or .csv file containing natural gas
                         consumption by week
     :param train_frac:  fraction (number between 0-1) of data for training
     """
     HR_WK = 24 * 7  # hours in a week
 
-    temperature = read_training_data(trainx)
-    gas = read_training_data(trainy)
+    temperature = read_training_data(xpth).rename(columns={'ID': 'State'})
+    gas = read_training_data(ypth)
 
-    temperature = temperature.rename(columns={'ID': 'State'})
+    # Display dataset statistics that we'll use for standardization
+    temp_stats = temperature[['State', 'temperature']].groupby('State').describe()
+    gas_stats = gas[['State', 'mmcf']].groupby('State').describe()
+    allstats = pd.concat([temp_stats, gas_stats], axis=1)
+    print("\nInput dataset summary:")
+    print(allstats.transpose(), "\n")
+
     temperature = add_quarter_and_week(temperature, 'time')
 
     # Remove temperature data for times not in gas data
     temperature = temperature.merge(gas, how='left', on=['EconYear', 'quarter', 'week', 'State'], validate='m:1')
-    temperature = temperature[~(temperature.value.isna())]
+    temperature = temperature[~(temperature.mmcf.isna())]
     temperature = temperature.sort_values(['State', 'EconYear', 'quarter', 'week'])
 
     assert len(gas) == len(temperature) / HR_WK
 
-    # Array with dimensions [regions, weeks, hours]
+    # Our goal is an array with dimensions [weeks, hours, regions]
     nreg = len(temperature.State.unique())
     nweek = len(temperature) // (HR_WK * nreg)
     temp_arr = temperature.temperature.values.reshape((nreg, nweek, HR_WK))
+    temp_arr = np.moveaxis(temp_arr, 0, 2)
 
-    # Array with dimensions [regions, weeks]
+    # Array with dimensions [weeks, regions]
     gas = gas.sort_values(['State', 'EconYear', 'quarter', 'week'])
-    gas_arr = gas.value.values.reshape((nreg, nweek))
+    gas_arr = gas.mmcf.values.reshape((nreg, nweek))
+    gas_arr = gas_arr.transpose()
 
-    # Split the datasets into a training set and a test set. We will use the
-    # test set in the final evaluation of our model.
-    train_idx = np.random.choice(nweek, size=int(nweek * train_frac), replace=False)
-    test_idx = np.setdiff1d(np.arange(nweek), train_idx)
-    temp_arr[:, train_idx, :].shape
-    temp_arr[:, test_idx, :].shape
-
-    allstats = dataset.groupby('ID').describe()
-    print("\nInput dataset summary:")
-    print(allstats.transpose(), "\n")
-
-    return train_dataset, test_dataset, allstats
+    return temp_arr, gas_arr, allstats
 
 
-def run(trainx, trainy, learning_rate, l1, l2, epochs, patience, checkpoint_path,
+def run(xpth, ypth, learning_rate, l1, l2, epochs, patience, checkpoint_path,
         embedding_size, sample_size=1000, plots=False):
     """
     Build and train the electricity model.
 
     Creates plots of process, if specified.
     """
-    # Split data into training and test datasets
-    train_dataset, test_dataset, allstats = prep_data(trainx, trainy)
+    xpth = 'temperature_by_state_popweighted.csv'
+    ypth = 'gas_weekly_by_state.csv'
+
+    # Get the data as numpy arrays
+    # temp_arr, gas_arr, allstats = prep_data(xpth, ypth)
+
+    # For testing!!
+    # np.save('temp_arr.npy', temp_arr)
+    # np.save('gas_arr.npy', gas_arr)
+    # allstats.to_pickle('allstats.pkl')
+    temp_arr = np.load('temp_arr.npy')
+    gas_arr = np.load('gas_arr.npy')
+    allstats = pd.read_pickle('allstats.pkl')
+
+    # Split the datasets into a training set and a test set. We will use the
+    # test set in the final evaluation of our model.
+    train_frac = 0.2
+    nweek = temp_arr.shape[0]
+    train_idx = np.random.choice(nweek, size=int(nweek * train_frac), replace=False)
+    test_idx = np.setdiff1d(np.arange(nweek), train_idx)
+
+    trainx = temp_arr[train_idx, :, :]
+    trainy = gas_arr[train_idx, :]
+    testx = temp_arr[test_idx, :, :]
+    testy = gas_arr[test_idx, :]
 
     # Standardize all the data
-    stdzd_train_data = standardize(train_dataset, allstats, ['Load (MW)', 'temp'])
-    stdzd_test_data = standardize(test_dataset, allstats, ['Load (MW)', 'temp'])
-
-    # Separate the target value, or "label", from the features. This label is
-    # the value that we will train the model to predict (electric load).
-    stdzd_train_labels = stdzd_train_data.pop('Load (MW)')
-    stdzd_test_labels = stdzd_test_data.pop('Load (MW)')
+    stdzd_train_x = standardize(trainx)
+    stdzd_train_y = standardize(trainy)
+    stdzd_test_x = standardize(testx)
+    stdzd_test_y = standardize(testy)
 
     # The IDs cannot be used as inputs on their own, as the NN can only work
     # with meaningful numeric data. To address this, we use an Embedding
     # layer, which takes in the ID values represented as integers.
-    category_names = stdzd_train_data['ID'].unique()
+    category_names = allstats.index
     category_map = {name: id for id, name in enumerate(category_names)}
-    train_region_embed_id = stdzd_train_data.pop('ID').map(category_map)
-    test_region_embed_id = stdzd_test_data.pop('ID').map(category_map)
+
+    train_region_embed_id = np.tile(np.arange(len(category_names)), stdzd_train_x.shape[0])
+    test_region_embed_id = np.tile(np.arange(len(category_names)), stdzd_test_x.shape[0])
+
+    stdzd_train_labels = stdzd_train_y.flatten()
+    stdzd_test_labels = stdzd_test_y.flatten()
+
+    input_layer_shape = stdzd_train_x.shape[1]  # Hours in a week
+
+    # Converts to (case x 168) where every 51 rows is the case for all states for a given timestep
+    train_weeks = np.moveaxis(stdzd_train_x, 2, 1).reshape(-1, input_layer_shape, 1)
+    train_time = np.repeat(train_idx, len(category_names))
+    test_weeks = np.moveaxis(stdzd_test_x, 2, 1).reshape(-1, input_layer_shape, 1)
+    test_time = np.repeat(test_idx, len(category_names))
 
     # Build and show the model
-    model = build_model(l1, l2, learning_rate, len(category_names), embedding_size)
+    model = build_model(input_layer_shape, l1, l2, learning_rate, len(category_names), embedding_size)
     model.summary()
+    plot_model(model, to_file='model_plot.png', show_shapes=True, show_layer_names=True)
 
     # The patience parameter is the amount of epochs to check for improvement
     early_stop = keras.callbacks.EarlyStopping(monitor='val_loss', patience=patience, restore_best_weights=True)
@@ -171,7 +202,7 @@ def run(trainx, trainy, learning_rate, l1, l2, epochs, patience, checkpoint_path
                                                      save_weights_only=True,
                                                      verbose=0, period=5)
 
-    history = model.fit(x=[stdzd_train_data, train_region_embed_id],
+    history = model.fit(x=[train_weeks, train_time, train_region_embed_id],
                         y=stdzd_train_labels,
                         epochs=epochs, validation_split=0.2, verbose=0,
                         callbacks=[early_stop, PrintDot()])
@@ -179,58 +210,42 @@ def run(trainx, trainy, learning_rate, l1, l2, epochs, patience, checkpoint_path
 
     if plots:
         plot_history(history)
-        plot_embeddings(model.layers[1].get_weights()[0], category_names)
+        plot_embeddings(model.layers[7].get_weights()[0], category_names)
 
     # Evaluate the model on our reserved test data
-    loss, mae, mse = model.evaluate([stdzd_test_data, test_region_embed_id],
+    loss, mae, mse = model.evaluate([test_weeks, test_time, test_region_embed_id],
                                     stdzd_test_labels, verbose=0)
     print("Testing set standardized Mean Abs Error: {:5.3f}".format(mae))
 
-    stdzd_train_predictions = model.predict([stdzd_train_data, train_region_embed_id]).flatten()
-    stdzd_test_predictions = model.predict([stdzd_test_data, test_region_embed_id]).flatten()
+    stdzd_train_predictions = model.predict([train_weeks, train_time, train_region_embed_id]).flatten()
+    stdzd_test_predictions = model.predict([test_weeks, test_time, test_region_embed_id]).flatten()
 
     trn_resid = stdzd_train_predictions - stdzd_train_labels
     tst_resid = stdzd_test_predictions - stdzd_test_labels
 
     if plots:
         plot_predictions(stdzd_test_labels, stdzd_test_predictions)
-        plot_predictions_facet(model, category_names, allstats, stdzd_train_data, train_region_embed_id)
-        plot_residuals(trn_resid, tst_resid, stdzd_test_data, stdzd_train_data)
+        plot_predictions_facet(model, category_names, allstats, stdzd_train_x, train_region_embed_id)
+        plot_residuals(trn_resid, tst_resid, train_weeks.mean(axis=(1, 2)), test_weeks.mean(axis=(1, 2)))
 
     print("Test residuals mean {:5.4f}".format(np.mean(tst_resid)))
     print("Training residuals mean {:5.4f}".format(np.mean(trn_resid)))
 
-    resid_neg = np.array(trn_resid)[np.array(stdzd_train_data).squeeze() < 0.0]
-    resid_pos = np.array(trn_resid)[np.array(stdzd_train_data).squeeze() > 0.0]
-
-    print("Training negative residuals mean {:5.4f}".format(np.mean(resid_neg)))
-    print("Training positive residuals mean {:5.4f}".format(np.mean(resid_pos)))
-
     return mae, mse, round(np.mean(trn_resid), 5), round(np.mean(tst_resid), 5)
 
 
-def standardize(x, allstats, vars):
+def standardize(x):
     """
-    Standardize numeric features based on ID.
+    Standardize numeric features.
 
     It is good practice to standardize features that use different scales and
     ranges. Although the model might converge without feature standardization,
     it makes training more difficult, and it makes the resulting model dependent
     on the choice of units used in the input.
 
-    :param x:           A DataFrame with an 'ID' column
-    :param allstats:    A DataFrame of summary statistics for each ID
-    :param vars:        List of numeric variable names to standardize
+    :param x:           A 3d Numpy array
     """
-    assert isinstance(vars, list)
-
-    for var in vars:
-        stats = allstats[var]
-        x = x.merge(stats[['mean', 'std']], left_on='ID', right_index=True)
-        x.loc[:, var] = (x[var] - x['mean']) / x['std']
-        x = x.drop(columns=['mean', 'std'])
-
-    return x
+    return (x - np.mean(x, axis=(0, 1))) / np.std(x, axis=(0, 1))
 
 
 def unstandardize(z, allstats, vars):
@@ -244,21 +259,34 @@ def unstandardize(z, allstats, vars):
     return z
 
 
-def build_model(l1, l2, lr, embed_in_dim, embed_out_dim):
+def build_model(input_layer_shape, l1, l2, lr, embed_in_dim, embed_out_dim):
     """
-    We need two separate inputs, one for categorical data that gets an
-    embedding, and one for the numerical data.
+    We need three separate inputs, one for categorical data that gets an
+    embedding, one for time since data start, and one for the numerical data.
     """
-    input_num = layers.Input(shape=(1,))
+    # Weekly timeseries input
+    input_num = layers.Input(shape=(input_layer_shape, 1))
+    conv1 = layers.Conv1D(filters=5, kernel_size=7, padding='same', activation='relu')(input_num)
+    pool1 = layers.MaxPool1D()(conv1)
+    conv2 = layers.Conv1D(filters=1, kernel_size=4, padding='same', activation='relu')(pool1)
+    pool2 = layers.MaxPool1D(12)(conv2)
+    dropo = layers.Dropout(0.5)(pool2)
+    feature_layer = layers.Flatten()(dropo)
+
+    # Time since start input (for dealing with energy efficiency changes)
+    input_time = layers.Input(shape=(1,))
+
+    # Region embbeding input
     input_cat = layers.Input(shape=(1,))
     embed_layer = layers.Embedding(embed_in_dim, embed_out_dim)(input_cat)
     embed_layer = layers.Flatten()(embed_layer)
-    merged_layer = layers.Concatenate()([input_num, embed_layer])
-    output = layers.Dense(l1, activation=tf.keras.activations.relu)(merged_layer)
-    output = layers.Dense(l2, activation=tf.keras.activations.relu)(output)
+
+    merged_layer = layers.Concatenate()([feature_layer, input_time, embed_layer])
+    output = layers.Dense(l1, activation='relu')(merged_layer)
+    output = layers.Dense(l2, activation='relu')(output)
     output = layers.Dense(1, bias_initializer=tf.keras.initializers.constant(4.0))(output)
 
-    model = keras.models.Model(inputs=[input_num, input_cat], outputs=[output])
+    model = keras.models.Model(inputs=[input_num, input_time, input_cat], outputs=[output])
 
     optimizer = tf.keras.optimizers.RMSprop(lr=lr)
 
@@ -268,17 +296,17 @@ def build_model(l1, l2, lr, embed_in_dim, embed_out_dim):
     return model
 
 
-def plot_residuals(trn_resid, tst_resid, stdzd_test_data, stdzd_train_data):
+def plot_residuals(trn_resid, tst_resid, stdzd_train_x, stdzd_test_x):
     """Plot residuals."""
     plt.xlabel('Standardized Temperature')
     plt.ylabel('Prediction residual')
-    plt.scatter(stdzd_test_data, tst_resid, alpha=0.05)
-    plt.scatter(stdzd_train_data, trn_resid, alpha=0.05)
+    plt.scatter(stdzd_test_x, tst_resid, alpha=0.05)
+    plt.scatter(stdzd_train_x, trn_resid, alpha=0.05)
     plt.savefig(f'{PLOTDIR}/residuals.png')
     plt.clf()
 
 
-def plot_predictions_facet(model, category_names, allstats, stdzd_train_data, train_region_embed_id):
+def plot_predictions_facet(model, category_names, allstats, stdzd_train_x, train_region_embed_id):
     """Facet plot of all temperature predictions."""
     temperature_seq = np.arange(-20, 40, 1) + 273.15
     npoints = len(temperature_seq)
@@ -288,14 +316,18 @@ def plot_predictions_facet(model, category_names, allstats, stdzd_train_data, tr
 
     plt.rcParams["figure.figsize"] = [20, 12]
     fig, axes = plt.subplots(nrows=nrow, ncols=ncol)
-    fig.suptitle('Modeled Load Predictions by Aggregate Region', fontsize=16)
+    fig.suptitle('Modeled Natural Gas Use Predictions by Aggregate Region', fontsize=16)
     for i, region in enumerate(category_names):
-        temp_data = pd.DataFrame({'ID': region, 'temp': temperature_seq})
-        stdzd_seq_data = standardize(temp_data, allstats, ['temp']).temp.values
-        stdzd_seq_predictions = model.predict([stdzd_seq_data, np.zeros(npoints) + i]).flatten()
+        regmean = allstats.loc[region, 'temperature']['mean']
+        regstd = allstats.loc[region, 'temperature']['std']
+        stdzd_seq_data = (temperature_seq - regmean) / regstd
+        stdzd_seq_data = np.repeat(stdzd_seq_data, 168).reshape(-1, 168, 1)
+        timestep = np.zeros(npoints) + 1042
 
-        training_bounds = (min(stdzd_train_data.loc[train_region_embed_id == i, 'temp']),
-                           max(stdzd_train_data.loc[train_region_embed_id == i, 'temp']))
+        stdzd_seq_predictions = model.predict([stdzd_seq_data, timestep, np.zeros(npoints) + i]).flatten()
+
+        training_bounds = (allstats.loc[region, 'temperature'][['min', 'max']]).values
+        training_bounds = (training_bounds - regmean) / regstd
 
         if len(category_names) == 1:
             ax = axes
@@ -304,10 +336,10 @@ def plot_predictions_facet(model, category_names, allstats, stdzd_train_data, tr
         ax.set_title(region)
         ax.axvspan(training_bounds[0], training_bounds[1], alpha=0.3, color='salmon')
         ax.set_xlim([-4, 4])
-        ax.plot(stdzd_seq_data, stdzd_seq_predictions)
+        ax.plot(stdzd_seq_data[:, 0, 0], stdzd_seq_predictions)
 
     fig.text(0.5, 0.04, 'Standardized Temperature', ha='center')
-    fig.text(0.04, 0.5, 'Standardized Load', va='center', rotation='vertical')
+    fig.text(0.04, 0.5, 'Standardized Natural Gas COnsumption', va='center', rotation='vertical')
     plt.savefig(f'{PLOTDIR}/predictions.png')
     plt.clf()
 
@@ -347,7 +379,7 @@ def plot_history(history):
 
     plt.figure()
     plt.xlabel('Epoch')
-    plt.ylabel('Mean Abs Error [Load (MW)]')
+    plt.ylabel('Mean Abs Error')
     plt.title('Training Performance')
     plt.plot(hist['epoch'], hist['mean_absolute_error'],
              label='Train Error')
@@ -371,6 +403,7 @@ def plot_history(history):
 def main():
     """Get hyperparams, load and standardize data, train and evaluate."""
     st = time.time()
+    notes = ''
 
     args = get_args()
 
@@ -380,16 +413,16 @@ def main():
     # Record results always
     if not os.path.exists(res_fname):
         with open(res_fname, 'w') as results_file:
-            results_file.write(','.join(['samplesize', 'lr', 'L1', 'L2', 'patience',
-                                         'embedsize', 'mae', 'mse', 'mean train residual', 'mean test residual']))
+            results_file.write(','.join(['samplesize', 'lr', 'L1', 'L2', 'patience', 'embedsize', 'mae', 'mse',
+                                         'mean train residual', 'mean test residual', 'notes']))
             results_file.write('\n')
 
     with open(res_fname, 'a') as outfile:
         results = run(args.trainx, args.trainy, args.lr, args.L1, args.L2, args.epochs, args.patience,
-                      args.model, args.embedsize, sample_size=sample_size, plots=True)
+                      args.model, args.embedsize, plots=True)
 
-        argline = ','.join(str(a) for a in [sample_size, args.lr, args.L1, args.L2, args.patience, args.embedsize])
-        outfile.write(argline + ',' + ','.join([str(r) for r in results]))
+        argline = ','.join(str(a) for a in ['all', args.lr, args.L1, args.L2, args.patience, args.embedsize])
+        outfile.write(argline + ',' + ','.join([str(r) for r in results]) + ',' + notes)
         outfile.write('\n')
 
         print(f'Done in {time.time() - st} seconds.')

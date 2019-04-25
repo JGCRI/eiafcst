@@ -77,7 +77,7 @@ def main():
     # Now that we have complete economic weeks, aggregate to that level
     gasdf = gasdf.groupby(['EconYear', 'quarter', 'week', 'State'], as_index=False).agg({'value': 'sum'})
 
-    return gasdf
+    return gasdf.rename(columns={'value': 'mmcf'})
 
 
 if __name__ == '__main__':
