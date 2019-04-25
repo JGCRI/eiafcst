@@ -31,8 +31,7 @@ import numpy as np
 #   https://stackoverflow.com/questions/51398563/python-mask-netcdf-data-using-shapefile
 # ==============================================================================
 def transform_from_latlon(lat, lon):
-    """ input 1D array of lat / lon and output an Affine transformation
-    """
+    """Input 1D array of lat / lon and output an Affine transformation."""
     lat = np.asarray(lat)
     lon = np.asarray(lon)
     trans = Affine.translation(lon[0], lat[0])
@@ -295,6 +294,13 @@ def get_args():
 
 
 def main():
+    """
+    Build temperature datasets at different spatial resolutions.
+
+    State dataset comes from:
+    https://www.arcgis.com/home/item.html?id=f7f805eb65eb4ab787a0a3e1116ca7e5#overview
+    """
+
     args = get_args()
 
     indir = resource_filename('eiafcst', os.path.join('data', 'raw_data', 'temperature'))
