@@ -34,8 +34,15 @@ def run(trainx, trainy, lr, cl1, cf1, cl2, cf2, l1, l2, epochs, patience, model,
     nregion = 14  # Number of aggregate electricity regions
     model = build_model(168, lr, cl1, cf1, cl2, cf2, l1, l2, nregion, embedsize)
 
+    model.summary()
+
     plot_model(model, to_file='gdp_model.png', show_shapes=True, show_layer_names=True)
 
+    trainx = pd.read_pickle('load_by_agg_region_2006-2017.pkl')
+    trainx = read_training_data('load_by_agg_region_2006-2017.csv')
+
+    trainx = trainx[~((trainx['EconYear'] == 2006) & (trainx['quarter'] == 1) & (trainx['week'] == 1))]
+    trainx[['NERC Region', 'Hourly Load Data As Of']].groupby('NERC Region').describe()
     return 0, 0, 0, 0
 
 
@@ -62,7 +69,7 @@ def build_model(input_layer_shape, lr, cl1, cf1, cl2, cf2, l1, l2, embed_in_dim,
 
     """
     # Weekly timeseries input
-    input_numeric = layers.Input(shape=(input_layer_shape, ))
+    input_numeric = layers.Input(shape=(input_layer_shape, ), name='HourlyElectricity')
 
     # The convolutional layers need input tensors with the shape (batch, steps, channels).
     # A convolutional layer is 1D in that it slides through the data length-wise,
@@ -70,18 +77,19 @@ def build_model(input_layer_shape, lr, cl1, cf1, cl2, cf2, l1, l2, embed_in_dim,
     # it to start.
     input_reshaped = layers.Reshape((input_layer_shape, 1))(input_numeric)
 
-    conv1 = layers.Conv1D(filters=cf1, kernel_size=cl1, padding='same', activation='relu')(input_reshaped)
-    pool1 = layers.MaxPool1D()(conv1)
-    conv2 = layers.Conv1D(filters=cf2, kernel_size=cl2, padding='same', activation='relu')(pool1)
-    pool2 = layers.MaxPool1D(12)(conv2)
-    dropo = layers.Dropout(0.5)(pool2)
+    # Conv1D parameters: Conv1D(filters, kernel_size, ...)
+    conv1 = layers.Conv1D(cf1, cl1, padding='same', activation='relu', name='Convolution1')(input_reshaped)
+    pool1 = layers.MaxPool1D(name='MaxPool1')(conv1)
+    conv2 = layers.Conv1D(cf2, cl2, padding='same', activation='relu', name='Convolution2')(pool1)
+    pool2 = layers.MaxPool1D(12, name='MaxPool2')(conv2)
+    dropo = layers.Dropout(0.5, name='DropHalf')(pool2)
     feature_layer = layers.Flatten()(dropo)
 
     # Time since start input (for dealing with energy efficiency changes)
-    input_time = layers.Input(shape=(1,))
+    input_time = layers.Input(shape=(1,), name='TimeSinceStart')
 
     # Region embbeding input
-    input_cat = layers.Input(shape=(1,))
+    input_cat = layers.Input(shape=(1,), name='RegionalEmbedding')
     embed_layer = layers.Embedding(embed_in_dim, embed_out_dim)(input_cat)
     embed_layer = layers.Flatten()(embed_layer)
 
@@ -89,22 +97,20 @@ def build_model(input_layer_shape, lr, cl1, cf1, cl2, cf2, l1, l2, embed_in_dim,
     merged_layer = layers.Concatenate()([feature_layer, input_time, embed_layer])
     merged_layer = layers.Dense(l1, activation='relu')(merged_layer)
     encoded = layers.Dense(l2, activation='relu')(merged_layer)
-    # encoder = keras.models.Model(inputs=[input_numeric, input_time, input_cat], outputs=[encoded])
 
     # At this point, the representation is the most encoded and small
     # Now let's build the decoder
-    # decoder_input = layers.Input(shape=(l2, ))
     x = layers.Reshape((l2, 1))(encoded)
     x = layers.Conv1D(filters=cf2, kernel_size=cl2, padding='same', activation='relu')(x)
     x = layers.UpSampling1D(12)(x)
     x = layers.Conv1D(filters=cf1, kernel_size=cl1, padding='same', activation='relu')(x)
     x = layers.UpSampling1D()(x)
     x = layers.Conv1D(filters=1, kernel_size=cl1, padding='same', activation='relu')(x)
-    decoded = layers.Flatten()(x)
+    decoded = layers.Flatten(name='DecoderOutput')(x)
     # decoder = keras.models.Model(decoder_input, decoded)
 
     # This is our actual output, the GDP prediction
-    output = layers.Dense(1, bias_initializer=tf.keras.initializers.constant(4.0))(encoded)
+    output = layers.Dense(1, name='GDP_Output')(encoded)
 
     autoencoder = keras.models.Model([input_numeric, input_time, input_cat], [output, decoded])
 

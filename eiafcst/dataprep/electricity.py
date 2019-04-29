@@ -419,24 +419,25 @@ def build_electricity_dataset():
     snl = snl.reset_index(drop=True)
 
     snlbak = snl.copy()
-    snl[snl['Load (MW)'] == 0]
 
     # Create the complete index with all date/BA combinations
     all_codes = snl.eia_code.unique()
     all_dates = np.sort(snl['Hourly Load Data As Of'].unique())
     all_index = pd.MultiIndex.from_product((all_codes, all_dates), names=['eia_code', 'Hourly Load Data As Of'])
 
-    # Reindexing puts NaNs in for missing data; fill in everything except for load
+    # Reindexing puts NaNs in for missing data
     snl = snl.set_index(['eia_code', 'Hourly Load Data As Of']).reindex(all_index).reset_index()
+
+    # fill in identifying info for each BA (all cols except for load and date)
     meta_cols = [c for c in snl.columns if c not in {'eia_code', 'Hourly Load Data As Of', 'Load (MW)'}]
-    snl[meta_cols] = snl.groupby('eia_code')[meta_cols].fillna(method='ffill')
+    snl.loc[:, meta_cols] = snl.groupby('eia_code')[meta_cols].fillna(method='ffill').fillna(method='bfill')
+
+    snl = add_quarter_and_week(snl, datecol='Hourly Load Data As Of')
 
     snl = convert_to_utc(snl, timezone_map)
 
     # Now that the date column is finalized, we don't need a Year column
     snl = snl.drop(columns='Year')
-
-    snl = add_quarter_and_week(snl, datecol='Hourly Load Data As Of')
 
     # Assigning to economic quarters replaces the Year column with EconYear,
     # which is not necessarily the same. Values shifted to an earlier EconYear

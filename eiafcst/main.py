@@ -4,9 +4,9 @@ Run the GDP prediction model.
 Caleb Braun
 3/19/19
 """
-from dataprep import electricity
-from dataprep import natural_gas
-from models import model_gas
+from eiafcst.dataprep import electricity
+from eiafcst.dataprep import natural_gas
+from eiafcst.models import model_gas
 from pkg_resources import resource_filename
 import argparse
 import os
@@ -56,13 +56,14 @@ def main():
 
     df = electricity.build_electricity_dataset()
 
-    df.to_pickle(os.path.join(args.output_dir, 'load_by_sub_region_2006-2017.pkl'))
-    # df = pd.read_csv('/Users/brau074/Documents/EIA/eiafcst/load_by_sub_region_2006-2017.csv')
+    df.to_pickle(os.path.join(args.outdir, 'load_by_sub_region_2006-2017.pkl'))
+    df.to_csv(os.path.join(args.outdir, 'load_by_sub_region_2006-2017.csv'), index=False)
 
     # Aggregate to NERC region
     keys = ['NERC Region', 'EconYear', 'quarter', 'week', 'Hourly Load Data As Of']
     dfagg = df.groupby(keys, as_index=False).agg({'Load (MW)': 'sum'})
-    dfagg.to_pickle(os.path.join(args.output_dir, 'load_by_agg_region_2006-2017.pkl'))
+    dfagg.to_pickle(os.path.join(args.outdir, 'load_by_agg_region_2006-2017.pkl'))
+    dfagg.to_csv(os.path.join(args.outdir, 'load_by_agg_region_2006-2017.csv'))
 
     # Diagnostics
     df_yearly = electricity.agg_to_year(df)
