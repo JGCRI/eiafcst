@@ -1,0 +1,130 @@
+﻿Master BA Name,eTag ID,EIA ID,NERC Region
+Alberta Electric System Operator,AESO,99908,WECC-NWPP
+British Columbia Transmission Corporation,BCTC,99907,WECC-NWPP
+Comision Federal de Electricidad,CFE,99909,WECC-CAMX
+Hydro-Quebec TransEnergie,HQT,99902,NPCC
+Manitoba Hydro,MHEB,99900,MRO
+New Brunswick System Operator,NBSO,99903,NPCC
+Nova Scotia Power Inc.,NSPI,99904,NPCC
+Ontario Independent Electricity System Operator,IESO,99905,NPCC
+Saskatchewan Power Corporation,SPC,99901,MRO
+Alliant Energy - East,ALTE,186,MRO
+Alliant Energy - West,ALTW,193,MRO
+Big Rivers Electric Corporation,BREC,1692,SERC
+"City of Columbia, MO",CWLD,4045,SERC
+"City of Springfield, IL - CWLP",CWLP,17828,SERC
+Dairyland Power Cooperative,DPC,4716,MRO
+Duke Energy Indiana Inc,PSI,15470,RFC
+Great River Energy,GRE,7570,MRO
+"Hoosier Energy REC, Inc.",HE,9267,RFC
+Madison Gas and Electric Company,MGE,11479,MRO
+Michigan Electric Coordinated Systems,MECS,12427,RFC
+MidAmerican Energy Company,MEC,12341,MRO
+"Minnesota Power (Allete, Inc.)",MP,12647,MRO
+"Muscatine Power & Water (Board Of Water, Electric & Communications)",MPW,13143,MRO
+Northern Indiana Public Service Company,NIPS,13756,RFC
+Northern States Power (Xcel Energy),NSP,13781,MRO
+Otter Tail Power Company,OTP,14232,MRO
+Southern Illinois Power Cooperative,SIPC,17632,SERC
+"Southern Indiana Gas & Electric Company d/b/a Vectren Energy Delivery of Indiana, Inc.",SIGE,17633,RFC
+Southern Minnesota Municipal Power Agency,SMP,40580,MRO
+Upper Peninsula Power Company,UPPC,19578,MRO
+Wisconsin Electric Power Company,WEC,20847,MRO
+Wisconsin Public Service Corporation,WPS,20860,MRO
+American Electric Power Service Corp. As Agent For Public Svc. Co. Of Oklahoma & SW Ele Pwr Co.,CSWS,99905,SPP
+Board Of Public Utilities (Kansas City KS),KACY,9996,SPP
+"City Utilities Of Springfield, MO",SPRM,17833,SPP
+Cleco Corporation,CLEC,3265,SPP
+Grand River Dam Authority,GRDA,7490,SPP
+"Independence Power & Light (Independence,Missouri)",INDN,9231,SPP
+Kansas City Power & Light Company,KCPL,10000,SPP
+KCPL - Greater Missouri Operations,MPS,12698,SPP
+Lafayette Utilities System,LAFA,9096,SPP
+Louisiana Energy & Power Authority,LEPA,26253,SPP
+Oklahoma Gas And Electric Co.,OKGE,14063,SPP
+Southwestern Power Administration,SPA,17716,SPP
+Southwestern Public Service Co. (Xcel Energy),SPS,17718,SPP
+Sunflower Electric Power Corporation,SECI,18315,SPP
+The Empire District Electric Company,EDE,5860,SPP
+Westar Energy,WR,22500,SPP
+Western Farmers Electric Cooperative,WFEC,20447,SPP
+"Alcoa Power Generating, Inc. - Yadkin Division",YAD,317,SERC
+Arizona Public Service Company,AZPS,803,WECC-AZNM
+"Arlington Valley, LLC - AVBA",DEAA,56812,WECC-AZNM
+"Associated Electric Cooperative, Inc.",AECI,924,SERC
+Avista Corporation,AVA,20169,WECC-NWPP
+Balancing Authority of Northern California,BANC,16534,WECC-NWPP
+Batesville Balancing Authority,BBA,11282,SERC
+Bonneville Power Administration,BPAT,1738,WECC-NWPP
+Brazos Balancing Authority,BRAZ,2171,SERC
+California Independent System Operator,CISO,2775,WECC-CAMX
+City of Benton (BUBA),BUBA,1581,SERC
+City of Conway,CWAY,4280,SERC
+City of Homestead,HST,8795,FRCC
+"City of North Little Rock, AR",NLR,13718,SERC
+City of Osceola (OMLP),OMLP,14216,SERC
+"City of Ruston, LA (DERS)",DERS,16463,SERC
+"City of Tacoma, Department of Public Utilities, Light Division",TPWR,18429,WECC-NWPP
+City of Tallahassee,TAL,18445,FRCC
+Duke Energy Carolinas,DUK,5416,SERC
+East Kentucky Power Cooperative,EKPC,5580,SERC
+El Paso Electric Company,EPE,5701,WECC-AZNM
+"Electric Energy, Inc.",EEI,5748,SERC
+"Electric Reliability Council of Texas, Inc.",ERCO,5723,TRE
+"Entergy Services, Inc. ",EES,12506,SERC
+Florida Municipal Power Pool,FMPP,14610,FRCC
+Florida Power & Light Company,FPL,6452,FRCC
+Gainesville Regional Utilities,GVL,6909,FRCC
+"Gila River Power, LP - BA",GRMA,14412,WECC-AZNM
+"Griffith Energy, LLC",GRIF,56090,WECC-AZNM
+Idaho Power Company,IPCO,9191,WECC-NWPP
+Imperial Irrigation District,IID,9216,WECC-AZNM
+ISO New England Inc.,ISNE,13434,NPCC-NEWE
+JEA,JEA,9617,FRCC
+LG&E and KU Services Company as agent for Louisville Gas and Electric Company and Kentucky Utilities Company,LGEE,11249,SERC
+Lincoln Electric System,LES,11018,MRO
+Los Angeles Department of Water and Power,LDWP,11208,WECC-CAMX
+"Louisiana Generating, LLC",LAGN,11252,SERC
+"Midwest Independent Transmission System Operator, Inc.",MISO,56669,MRO
+"NaturEner Power Watch, LLC (GWA)",GWA,99906,WECC-NWPP
+Nebraska Public Power District,NPPD,13337,MRO
+Nevada Power Company,NEVP,13407,WECC-AZNM
+"New Harquahala Generating Company, LLC - HGBA",HGMA,32790,WECC-AZNM
+"New Smyrna Beach, Utilities Commission of",NSB,13485,FRCC
+New York Independent System Operator,NYIS,13501,NPCC-NYIS
+NorthWestern Energy (NWMT),NWMT,12825,WECC-NWPP
+Ohio Valley Electric Corporation,OVEC,14015,RFC
+Omaha Public Power District,OPPD,14127,MRO
+PacifiCorp - East,PACE,14379,WECC-NWPP
+PacifiCorp - West,PACW,14378,WECC-NWPP
+"PJM Interconnection, LLC",PJM,14725,RFC
+"Plum Point Energy Associates (PPEA), LLC - BA",PLUM,55995,SERC
+Portland General Electric Company,PGE,15248,WECC-NWPP
+PowerSouth Energy Cooperative,AEC,189,SERC
+Progress Energy Carolinas,CPLW,3046,SERC
+Progress Energy Florida,FPC,6455,FRCC
+Public Service Company of Colorado,PSCO,15466,WECC-RMPA
+Public Service Company of New Mexico,PNM,15473,WECC-AZNM
+Public Utility District No. 1 of Chelan County,CHPD,3413,WECC-NWPP
+"Public Utility District No. 2 of Grant County, Washington",GCPD,14624,WECC-NWPP
+PUD No. 1 of Douglas County,DOPD,5326,WECC-NWPP
+Puget Sound Energy,PSEI,15500,WECC-NWPP
+Salt River Project,SRP,16572,WECC-AZNM
+Seattle City Light,SCL,16868,WECC-NWPP
+Seminole Electric Cooperative,SEC,21554,FRCC
+Sierra Pacific Power Company,SPPC,17166,WECC-NWPP
+South Carolina Electric & Gas Company,SCEG,17539,SERC
+South Carolina Public Service Authority,SC,17543,SERC
+South Mississippi Electric Power Association,SME,17568,SERC
+Southeastern Power Administration,SEPA,29304,SERC
+"Southern Company Services, Inc. - Trans",SOCO,18195,SERC
+Southwest Power Pool,SPP,59504,SPP
+Tampa Electric Company,TEC,18454,FRCC
+Tennessee Valley Authority,TVA,18642,SERC
+Tucson Electric Power Company,TEPC,24211,WECC-AZNM
+Turlock Irrigation District,TID,19281,WECC-NWPP
+"Union Power Partners, L.P. (PUPP)",PUPP,54796,SERC
+Western Area Power Administration - Desert Southwest Region,WALC,25471,WECC-AZNM
+Western Area Power Administration - Rocky Mountain Region,WACM,28503,WECC-RMPA
+Western Area Power Administration - Upper Great Plains East,WAUE,25470,MRO
+Western Area Power Administration UGP West,WAUW,19610,WECC-NWPP
