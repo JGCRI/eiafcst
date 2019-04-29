@@ -26,9 +26,15 @@ def add_quarter_and_week(df, datecol):
     df['quarter'] = df['midweek'].dt.quarter
     df['week'] = df['midweek'].dt.week
     df['EconYear'] = df['midweek'].dt.year
-    df['week'] = df.groupby(['EconYear', 'quarter'])['week'].transform(lambda x: x - min(x) + 1)
+
+    df.loc[:, 'week'] = df.groupby(['EconYear', 'quarter'])['week'].transform(lambda x: x - min(x) + 1)
 
     return df[['EconYear', 'quarter', 'week'] + cnames]
+
+
+def remove_incomplete_weeks(df, datecol, aggcols):
+    HR_IN_WK = 168
+    return df.groupby(aggcols + ['EconYear', 'quarter', 'week']).filter(lambda x: len(x) == HR_IN_WK)
 
 
 def long_to_wide(df, data_col='year'):

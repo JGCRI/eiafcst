@@ -6,6 +6,7 @@ Caleb Braun
 """
 from eiafcst.dataprep import electricity
 from eiafcst.dataprep import natural_gas
+from eiafcst.dataprep.utils import add_quarter_and_week
 from eiafcst.models import model_gas
 from pkg_resources import resource_filename
 import argparse
@@ -56,14 +57,18 @@ def main():
 
     df = electricity.build_electricity_dataset()
 
+    # Aggregate to NERC region
+    keys = ['NERC Region', 'Hourly Load Data As Of']
+    dfagg = df.groupby(keys, as_index=False).agg({'Load (MW)': 'sum'})
+    dfagg = add_quarter_and_week(dfagg, datecol='Hourly Load Data As Of')
+    dfagg = dfagg.groupby(['NERC Region', 'EconYear', 'quarter', 'week']).filter(lambda x: len(x) == 168)
+    dfagg.to_pickle(os.path.join(args.outdir, 'load_by_agg_region_2006-2017.pkl'))
+    dfagg.to_csv(os.path.join(args.outdir, 'load_by_agg_region_2006-2017.csv'), index=False)
+
+    df = add_quarter_and_week(df, datecol='Hourly Load Data As Of')
+    df = df.groupby(['eia_code', 'EconYear', 'quarter', 'week']).filter(lambda x: len(x) == 168)
     df.to_pickle(os.path.join(args.outdir, 'load_by_sub_region_2006-2017.pkl'))
     df.to_csv(os.path.join(args.outdir, 'load_by_sub_region_2006-2017.csv'), index=False)
-
-    # Aggregate to NERC region
-    keys = ['NERC Region', 'EconYear', 'quarter', 'week', 'Hourly Load Data As Of']
-    dfagg = df.groupby(keys, as_index=False).agg({'Load (MW)': 'sum'})
-    dfagg.to_pickle(os.path.join(args.outdir, 'load_by_agg_region_2006-2017.pkl'))
-    dfagg.to_csv(os.path.join(args.outdir, 'load_by_agg_region_2006-2017.csv'))
 
     # Diagnostics
     df_yearly = electricity.agg_to_year(df)

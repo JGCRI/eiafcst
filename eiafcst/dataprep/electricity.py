@@ -225,27 +225,6 @@ def add_missing(df, ferc_id_map, ferc_demand_file):
     return df
 
 
-def add_quarter_and_week(df, datecol):
-    """
-    Add quarter and week column to DataFrame.
-
-    1. Figure out the middle day of the week of each data point
-    2. Use that day to assign the quarter of each data point
-    3. Use that day to assign the week of the year of each data point
-    4. Make the first week of each quarter restart at 1
-    """
-    cnames = list(df.columns)
-
-    df['delta'] = pd.to_timedelta(3 - df[datecol].dt.weekday, unit='days')
-    df['midweek'] = df[datecol] + df['delta']
-    df['quarter'] = df['midweek'].dt.quarter
-    df['week'] = df['midweek'].dt.week
-    df['EconYear'] = df['midweek'].dt.year
-    df['week'] = df.groupby(['EconYear', 'quarter'])['week'].transform(lambda x: x - min(x) + 1)
-
-    return df[['EconYear', 'quarter', 'week'] + cnames]
-
-
 def convert_to_utc(df, timezone_map):
     """
     Convert time stamps to UTC.
@@ -364,7 +343,7 @@ def load_snl(hdf_name, hdf_tbl, min_year):
     return snl
 
 
-def build_electricity_dataset():
+def build_electricity_dataset(min_year):
     """
     Main function for creating the electricity dataset for modeling
 
@@ -375,8 +354,6 @@ def build_electricity_dataset():
     many more problems with the pre-2006 years of data that are not handled in
     this script.
     """
-    MIN_YEAR = 2006
-
     maps = 'data/mapping_files'
     ferc = 'data/form714-database'
     diag = 'data/diagnostics'
@@ -390,7 +367,7 @@ def build_electricity_dataset():
     hdf_name = resource_filename('eiafcst', 'data/raw_data/eia_elec_by_pca.h5')
     hdf_tbl = 'eia_data_all'
 
-    snl = load_snl(hdf_name, hdf_tbl, MIN_YEAR)
+    snl = load_snl(hdf_name, hdf_tbl, min_year)
 
     # Remove Canadian provinces (Alberta, British Columbia, Mexico, Ontario, Manitoba, Saskatchewan)
     canadian_pcas = ['AESO', 'BCHA', 'CFE', 'IESO', 'MHEB', 'SPC']
@@ -432,17 +409,13 @@ def build_electricity_dataset():
     meta_cols = [c for c in snl.columns if c not in {'eia_code', 'Hourly Load Data As Of', 'Load (MW)'}]
     snl.loc[:, meta_cols] = snl.groupby('eia_code')[meta_cols].fillna(method='ffill').fillna(method='bfill')
 
-    snl = add_quarter_and_week(snl, datecol='Hourly Load Data As Of')
-
     snl = convert_to_utc(snl, timezone_map)
 
     # Now that the date column is finalized, we don't need a Year column
     snl = snl.drop(columns='Year')
 
-    # Assigning to economic quarters replaces the Year column with EconYear,
-    # which is not necessarily the same. Values shifted to an earlier EconYear
-    # won't have the right week designation, so let's remove them.
-    snl = snl.loc[snl.EconYear >= MIN_YEAR, :]
+    # Sort
+    snl = snl.sort_values(['Master BA Name', 'Hourly Load Data As Of'])
 
-    return snl[['NERC Region', 'Master BA Name', 'Abbreviated PCA Name', 'eia_code',
-                'EconYear', 'quarter', 'week', 'Hourly Load Data As Of', 'Load (MW)']]
+    return snl[['NERC Region', 'Master BA Name', 'Abbreviated PCA Name',
+                'eia_code', 'Hourly Load Data As Of', 'Load (MW)']]
