@@ -29,9 +29,24 @@ from tensorflow.keras.utils import plot_model
 from pkg_resources import resource_filename
 
 
-def build_model(input_layer_shape, l1, l2, lr, embed_in_dim, embed_out_dim):
+def run(trainx, trainy, lr, cl1, cf1, cl2, cf2, l1, l2, epochs, patience, model, embedsize, plots=True):
+
+    nregion = 14  # Number of aggregate electricity regions
+    model = build_model(168, lr, cl1, cf1, cl2, cf2, l1, l2, nregion, embedsize)
+
+    plot_model(model, to_file='gdp_model.png', show_shapes=True, show_layer_names=True)
+
+    return 0, 0, 0, 0
+
+
+def build_model(input_layer_shape, lr, cl1, cf1, cl2, cf2, l1, l2, embed_in_dim, embed_out_dim):
     """
     Build the convolutional neural network.
+
+    Our model is constructed using the Keras functional API
+    (https://keras.io/getting-started/functional-api-guide/) which allows us to
+    have multiple inputs. Note that all inputs must be specified with an Input
+    layer.
 
     The main input to this model is a 4-dimensional array:
         [cases, weeks, hours, regions]
@@ -47,10 +62,17 @@ def build_model(input_layer_shape, l1, l2, lr, embed_in_dim, embed_out_dim):
 
     """
     # Weekly timeseries input
-    input_num = layers.Input(shape=(input_layer_shape, 1))
-    conv1 = layers.Conv1D(filters=5, kernel_size=7, padding='same', activation='relu')(input_num)
+    input_numeric = layers.Input(shape=(input_layer_shape, ))
+
+    # The convolutional layers need input tensors with the shape (batch, steps, channels).
+    # A convolutional layer is 1D in that it slides through the data length-wise,
+    # moving along just one dimension. Our data just has one channel, so we can reshape
+    # it to start.
+    input_reshaped = layers.Reshape((input_layer_shape, 1))(input_numeric)
+
+    conv1 = layers.Conv1D(filters=cf1, kernel_size=cl1, padding='same', activation='relu')(input_reshaped)
     pool1 = layers.MaxPool1D()(conv1)
-    conv2 = layers.Conv1D(filters=1, kernel_size=4, padding='same', activation='relu')(pool1)
+    conv2 = layers.Conv1D(filters=cf2, kernel_size=cl2, padding='same', activation='relu')(pool1)
     pool2 = layers.MaxPool1D(12)(conv2)
     dropo = layers.Dropout(0.5)(pool2)
     feature_layer = layers.Flatten()(dropo)
@@ -63,34 +85,68 @@ def build_model(input_layer_shape, l1, l2, lr, embed_in_dim, embed_out_dim):
     embed_layer = layers.Embedding(embed_in_dim, embed_out_dim)(input_cat)
     embed_layer = layers.Flatten()(embed_layer)
 
+    # Merge the inputs together and end our encoding with fully connected layers
     merged_layer = layers.Concatenate()([feature_layer, input_time, embed_layer])
-    output = layers.Dense(l1, activation='relu')(merged_layer)
-    output = layers.Dense(l2, activation='relu')(output)
-    output = layers.Dense(1, bias_initializer=tf.keras.initializers.constant(4.0))(output)
+    merged_layer = layers.Dense(l1, activation='relu')(merged_layer)
+    encoded = layers.Dense(l2, activation='relu')(merged_layer)
+    # encoder = keras.models.Model(inputs=[input_numeric, input_time, input_cat], outputs=[encoded])
 
-    model = keras.models.Model(inputs=[input_num, input_time, input_cat], outputs=[output])
+    # At this point, the representation is the most encoded and small
+    # Now let's build the decoder
+    # decoder_input = layers.Input(shape=(l2, ))
+    x = layers.Reshape((l2, 1))(encoded)
+    x = layers.Conv1D(filters=cf2, kernel_size=cl2, padding='same', activation='relu')(x)
+    x = layers.UpSampling1D(12)(x)
+    x = layers.Conv1D(filters=cf1, kernel_size=cl1, padding='same', activation='relu')(x)
+    x = layers.UpSampling1D()(x)
+    x = layers.Conv1D(filters=1, kernel_size=cl1, padding='same', activation='relu')(x)
+    decoded = layers.Flatten()(x)
+    # decoder = keras.models.Model(decoder_input, decoded)
+
+    # This is our actual output, the GDP prediction
+    output = layers.Dense(1, bias_initializer=tf.keras.initializers.constant(4.0))(encoded)
+
+    autoencoder = keras.models.Model([input_numeric, input_time, input_cat], [output, decoded])
 
     optimizer = tf.keras.optimizers.RMSprop(lr=lr)
 
-    model.compile(loss='mean_squared_error',
-                  optimizer=optimizer,
-                  metrics=['mean_absolute_error', 'mean_squared_error'])
-    return model
+    autoencoder.compile(loss='mean_squared_error',
+                        optimizer=optimizer,
+                        metrics=['mean_absolute_error', 'mean_squared_error'])
+    return autoencoder
 
 
 def get_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('trainx', type=str, help='Training dataset of gas consumption values')
-    parser.add_argument('trainy', type=str, help='Training dataset of temperature values')
+    parser.add_argument('trainx', type=str, help='Training dataset of electricity residuals')
+    parser.add_argument('trainy', type=str, help='Training dataset of quarterly GDP values')
     parser.add_argument('-lr', type=float, help='The learning rate (a float)', default=0.01)
+
+    # CNN parameters
+    parser.add_argument('-CL1', type=int,
+                        help='The number of units in the first convolutional layer\'s kernel (int) [default: 7]',
+                        default=7)
+    parser.add_argument('-CF1', type=int,
+                        help='The number of filters (channels) in the first convolutional layer (int) [default: 3]',
+                        default=3)
+    parser.add_argument('-CL2', type=int,
+                        help='The number of units in the second convolutional layer\'s kernel (int) [default: 7]',
+                        default=7)
+    parser.add_argument('-CF2', type=int,
+                        help='The number of filters (channels) in the second convolutional layer (int) [default: 3]',
+                        default=3)
+
+    # Hidden layers parameters
     parser.add_argument('-L1', type=int,
                         help='The number of units in the first hidden layer (int) [default: 16]',
                         default=16)
     parser.add_argument('-L2', type=int,
                         help='The number of units in the first hidden layer (int) [default: 16]',
                         default=16)
+
+    # General model parameters
     parser.add_argument('-epochs', type=int, help='The number of epochs to train for', default=1000)
     parser.add_argument('-patience', type=int,
                         help='How many epochs to continue training without improving dev accuracy (int) [default: 20]',
@@ -121,12 +177,12 @@ def main():
     notes = 'Still implementing...'
 
     # Run model
-    results = run(args.trainx, args.trainy, args.lr, args.L1, args.L2, args.epochs,
-                  args.patience, args.model, args.embedsize, plots=True)
+    results = run(args.trainx, args.trainy, args.lr, args.CL1, args.CF1, args.CL2, args.CF2, args.L1,
+                  args.L2, args.epochs, args.patience, args.model, args.embedsize, plots=True)
 
     # Record results
     with open(diag_fname, 'a') as outfile:
-        hyper_values = [str(v) for k, v in vars(args)]
+        hyper_values = [str(v) for k, v in vars(args).items()]
         diag_results = [str(r) for r in results]
         diag_values = ','.join(hyper_values + diag_results + [notes + '\n'])
         outfile.write(diag_values)
