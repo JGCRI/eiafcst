@@ -403,29 +403,30 @@ def plot_history(history):
 def main():
     """Get hyperparams, load and standardize data, train and evaluate."""
     st = time.time()
-    notes = ''
 
+    # Hyperparameters passed in via command line
     args = get_args()
 
-    diag_dir = resource_filename('eiafcst', os.path.join('models', 'diagnostic'))
-    res_fname = os.path.join(diag_dir, 'gas_results.csv')
+    # Set up diagnostics
+    hyperparams = [k for k in vars(args).keys()]
+    res_metrics = ['mae', 'mse', 'mean train residual', 'mean test residual']
+    diag_headers = hyperparams + res_metrics + ['notes']
+    diag_fname = diagnostic_file('gas_results.csv', diag_headers)
 
-    # Record results always
-    if not os.path.exists(res_fname):
-        with open(res_fname, 'w') as results_file:
-            results_file.write(','.join(['samplesize', 'lr', 'L1', 'L2', 'patience', 'embedsize', 'mae', 'mse',
-                                         'mean train residual', 'mean test residual', 'notes']))
-            results_file.write('\n')
+    notes = ''
 
-    with open(res_fname, 'a') as outfile:
-        results = run(args.trainx, args.trainy, args.lr, args.L1, args.L2, args.epochs, args.patience,
-                      args.model, args.embedsize, plots=True)
+    # Run model
+    results = run(args.trainx, args.trainy, args.lr, args.L1, args.L2, args.epochs,
+                  args.patience, args.model, args.embedsize, plots=True)
 
-        argline = ','.join(str(a) for a in ['all', args.lr, args.L1, args.L2, args.patience, args.embedsize])
-        outfile.write(argline + ',' + ','.join([str(r) for r in results]) + ',' + notes)
-        outfile.write('\n')
+    # Record results
+    with open(diag_fname, 'a') as outfile:
+        hyper_values = [str(v) for k, v in vars(args)]
+        diag_results = [str(r) for r in results]
+        diag_values = ','.join(hyper_values + diag_results + [notes + '\n'])
+        outfile.write(diag_values)
 
-        print(f'Done in {time.time() - st} seconds.')
+    print(f'Done in {time.time() - st} seconds.')
 
 
 if __name__ == '__main__':

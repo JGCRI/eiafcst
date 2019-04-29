@@ -6,6 +6,8 @@ Caleb Braun
 """
 import pandas as pd
 import numpy as np
+from os import path
+from pkg_resources import resource_filename
 
 
 def add_quarter_and_week(df, datecol):
@@ -78,5 +80,26 @@ def read_training_data(f, prec='float32'):
     return dataset
 
 
-def merge_temperature(df, temp_df):
-    pd.merge(df, temp_df)
+def diagnostic_file(fname, columns):
+    """
+    Construct a .csv file for recording diagnostic results of a model training.
+
+    Checks if a diagnostic file exists, and creates one if not.
+
+    :param fname:       the name of the diagnostic file.
+    :param columns:     list of attributes that will be recorded
+    """
+    diag_dir = resource_filename('eiafcst', path.join('models', 'diagnostic'))
+    res_fname = path.join(diag_dir, fname)
+
+    columns[-1] += '\n'
+
+    if not path.exists(res_fname):
+        with open(res_fname, 'w') as results_file:
+            results_file.write(','.join(columns))
+    else:
+        with open(res_fname, 'r') as results_file:
+            header = results_file.readline().split(',')
+            assert columns == header
+
+    return res_fname
