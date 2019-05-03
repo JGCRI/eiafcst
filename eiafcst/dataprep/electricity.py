@@ -148,6 +148,49 @@ def fix_miso(df):
     return df
 
 
+def fill_simulated(df, new_df):
+    """
+    Replace bad data with simulated values.
+
+    The PCAs OVEC and WACM contain values that would cause the model to pick up
+    unrealistic patterns in the data. For example, some years of WACM data are
+    missing or all zero. The OVEC values remained constant across a year.
+    Whether or not these represent the truth, we replace them with simulated
+    values (from a random forest model) to keep totals and a realistic pattern.
+
+    :param df:      Original DataFrame with bad data
+    :new_df:        Path to .csv containing values to replace
+    """
+    new_df = pd.read_csv(new_df)
+
+    new_df['datetime'] = pd.to_datetime(new_df['datetime'], utc=True)
+
+    new_df_col_map = {
+        'nercrgn': 'NERC Region',
+        'pca': 'Abbreviated PCA Name',
+        'datetime': 'Hourly Load Data As Of',
+        'load': 'Load (MW)'
+    }
+
+    # Ensure columns have common names, so that replacement maps correctly
+    new_df = new_df.rename(columns=new_df_col_map)
+    new_df = new_df[list(new_df_col_map.values())]
+
+    # Set common columns as index, except for Load, which we are replacing
+    idx_cols = list(new_df.columns)
+    idx_cols.remove('Load (MW)')
+
+    # Set identifier columns as index for the update function
+    df_idx = df.set_index(idx_cols)
+    new_df_idx = new_df.set_index(idx_cols)
+
+    # Perform the update, and reset index columns as attribute columns
+    df_idx.update(new_df_idx)
+    df_fixed = df_idx.reset_index()
+
+    return df_fixed[df.columns]
+
+
 def add_missing(df, ferc_id_map, ferc_demand_file):
     """
     Add missing data found in the 714 database.

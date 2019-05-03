@@ -6,7 +6,7 @@ Caleb Braun
 """
 import os
 import pandas as pd
-from eiafcst.dataprep.utils import add_quarter_and_week, merge_temperature
+from eiafcst.dataprep.utils import add_quarter_and_week
 from pkg_resources import resource_filename
 
 
