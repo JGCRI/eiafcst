@@ -300,7 +300,6 @@ def main():
     State dataset comes from:
     https://www.arcgis.com/home/item.html?id=f7f805eb65eb4ab787a0a3e1116ca7e5#overview
     """
-
     args = get_args()
 
     indir = resource_filename('eiafcst', os.path.join('data', 'raw_data', 'temperature'))

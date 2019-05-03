@@ -168,3 +168,40 @@ def diagnostic_file(fname, columns):
             assert columns == header
 
     return res_fname
+
+
+def combine_elec_and_temperature(elec, temp):
+    """
+    Prepare the dataset for modelling electric load from temperature.
+
+    Prerequisits are data created from
+        python eiafcst/main.py -e -fillfile eiafcst/data/random-forest-fill-values.csv ./
+    and
+        python eiafcst/dataprep/temperature.py temperature_by_agg_region.csv eiafcst/data/spatial/Aggregate_Regions/Aggregate_Regions.shp
+    """
+    temp = pd.read_csv(resource_filename('eiafcst', '../temperature_by_agg_region.csv'))
+    load = pd.read_csv(resource_filename('eiafcst', '../load_by_agg_region_2006-2017.csv'))
+
+    assert all(load['NERC Region'].isin(temp.ID))
+
+    ONEHOT = False
+
+    # Convert both to datetime
+    load['time'] = pd.to_datetime(load['Hourly Load Data As Of'])
+    temp['time'] = pd.to_datetime(temp['time'])
+
+    # Rename and select for merging
+    load = load.rename(columns={'NERC Region': 'ID'})
+    load = load[['ID', 'time', 'Load (MW)']]
+    temp = temp[['ID', 'time', 'temperature']]
+
+    # Inner join the two data set
+    data = load.merge(temp)
+
+    if ONEHOT:
+        # Convert our categorical ID column to numeric one-hot encoding
+        data = pd.concat([data, pd.get_dummies(data['ID'])], axis=1)
+        data = data.drop(columns='ID')
+
+    data.to_csv(resource_filename('eiafcst', '../load_and_temp_full.csv'), index=False)
+    data.to_pickle(resource_filename('eiafcst', '../load_and_temp_full.pkl'))
