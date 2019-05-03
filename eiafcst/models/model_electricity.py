@@ -14,49 +14,16 @@ import argparse
 import time
 import os
 
+from eiafcst.dataprep.utils import *
+
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
+from tensorflow.keras.utils import plot_model
 
 from pkg_resources import resource_filename
 
-PLOTDIR = resource_filename('eiafcst', os.path.join('models', 'diagnostic'))
-# INPUTDIR = '/Users/brau074/Documents/EIA/modeling/load/input'
-
-
-class PrintDot(keras.callbacks.Callback):
-    """Display training progress by printing a single dot for each completed epoch."""
-
-    def on_epoch_end(self, epoch, logs):
-        if epoch % 100 == 0:
-            print('')
-        print('.', end='')
-
-
-def get_args():
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument('traindata', type=str, help='Training dataset of temperature and load values')
-    parser.add_argument('-lr', type=float, help='The learning rate (a float)', default=0.01)
-    parser.add_argument('-L1', type=int,
-                        help='The number of units in the first hidden layer (int) [default: 16]',
-                        default=16)
-    parser.add_argument('-L2', type=int,
-                        help='The number of units in the first hidden layer (int) [default: 16]',
-                        default=16)
-    parser.add_argument('-epochs', type=int, help='The number of epochs to train for', default=1000)
-    parser.add_argument('-patience', type=int,
-                        help='How many epochs to continue training without improving dev accuracy (int) [default: 20]',
-                        default=20)
-    parser.add_argument('-embedsize', type=int,
-                        help='How many dimensions the region embedding should have (int) [default: 5]',
-                        default=5)
-    parser.add_argument('-model', type=str,
-                        help='Save the best model with this prefix (string) [default: /training_1/model.ckpt]',
-                        default=os.path.normpath('/training_1/model.ckpt'))
-
-    return parser.parse_args()
+PLOTDIR = resource_filename('eiafcst', os.path.join('models', 'diagnostic', 'elec'))
 
 
 def plot_by_region(dataset):
@@ -99,7 +66,8 @@ def prep_data(data_file, sample_size=None, train_frac=0.8):
     else:
         dataset = pd.read_pickle(data_file)
 
-    dataset = dataset.drop(columns=['year', 'hour', 'day'])  # At this point, don't learn from other features
+    dataset = dataset.drop(columns='time')  # At this point, don't learn from other features
+    dataset = dataset.rename(columns={'temperature': 'temp'})
 
     # We don't need float64 precision
     dataset.loc[:, ['Load (MW)', 'temp']] = dataset.loc[:, ['Load (MW)', 'temp']].astype('float32')
@@ -357,33 +325,62 @@ def plot_history(history):
     plt.clf()
 
 
+def get_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument('traindata', type=str, help='Training dataset of temperature and load values')
+    parser.add_argument('-lr', type=float, help='The learning rate (a float)', default=0.01)
+    parser.add_argument('-L1', type=int,
+                        help='The number of units in the first hidden layer (int) [default: 16]',
+                        default=16)
+    parser.add_argument('-L2', type=int,
+                        help='The number of units in the first hidden layer (int) [default: 16]',
+                        default=16)
+    parser.add_argument('-epochs', type=int, help='The number of epochs to train for', default=1000)
+    parser.add_argument('-patience', type=int,
+                        help='How many epochs to continue training without improving dev accuracy (int) [default: 20]',
+                        default=20)
+    parser.add_argument('-embedsize', type=int,
+                        help='How many dimensions the region embedding should have (int) [default: 2]',
+                        default=2)
+    parser.add_argument('-model', type=str,
+                        help='Save the best model with this prefix (string) [default: /training_1/model.ckpt]',
+                        default=os.path.normpath('/training_1/model.ckpt'))
+
+    return parser.parse_args()
+
+
 def main():
     """Get hyperparams, load and standardize data, train and evaluate."""
     st = time.time()
 
+    # Hyperparameters passed in via command line
     args = get_args()
 
-    sample_size = 5000
+    # FOR TESTING ONLY
+    sample_size = 1000
 
-    diag_dir = resource_filename('eiafcst', os.path.join('models', 'diagnostic'))
-    res_fname = os.path.join(diag_dir, 'results.csv')
+    # Set up diagnostics
+    hyperparams = [k for k in vars(args).keys()]
+    res_metrics = ['mae', 'mse', 'mean train residual', 'mean test residual']
+    diag_headers = hyperparams + res_metrics + ['notes']
+    diag_fname = diagnostic_file('elec_results.csv', diag_headers)
 
-    # Record results always
-    if not os.path.exists(res_fname):
-        with open(res_fname, 'w') as results_file:
-            results_file.write(','.join(['samplesize', 'lr', 'L1', 'L2', 'patience',
-                                         'embedsize', 'mae', 'mse', 'mean train residual', 'mean test residual']))
-            results_file.write('\n')
+    notes = ''
 
-    with open(res_fname, 'a') as outfile:
-        results = run(args.traindata, args.lr, args.L1, args.L2, args.epochs, args.patience,
-                      args.model, args.embedsize, sample_size=sample_size, plots=True)
+    # Run model
+    results = run(args.traindata, args.lr, args.L1, args.L2, args.epochs, args.patience,
+                  args.model, args.embedsize, sample_size=sample_size, plots=True)
 
-        argline = ','.join(str(a) for a in [sample_size, args.lr, args.L1, args.L2, args.patience, args.embedsize])
-        outfile.write(argline + ',' + ','.join([str(r) for r in results]))
-        outfile.write('\n')
+    # Record results
+    with open(diag_fname, 'a') as outfile:
+        hyper_values = [str(v) for k, v in vars(args).items()]
+        diag_results = [str(r) for r in results]
+        diag_values = ','.join(hyper_values + diag_results + [notes + '\n'])
+        outfile.write(diag_values)
 
-        print(f'Done in {time.time() - st} seconds.')
+    print(f'Done in {time.time() - st} seconds.')
 
 
 if __name__ == '__main__':

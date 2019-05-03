@@ -41,8 +41,16 @@ def run(trainx, trainy, lr, cl1, cf1, cl2, cf2, l1, l2, epochs, patience, model,
     trainx = pd.read_pickle('load_by_agg_region_2006-2017.pkl')
     trainx = read_training_data('load_by_agg_region_2006-2017.csv')
 
-    trainx = trainx[~((trainx['EconYear'] == 2006) & (trainx['quarter'] == 1) & (trainx['week'] == 1))]
-    trainx[['NERC Region', 'Hourly Load Data As Of']].groupby('NERC Region').describe()
+    # Array with dimensions [quarters, weeks, regions]
+    trainx = trainx.sort_values(['NERC Region', 'EconYear', 'quarter', 'week'])
+    nreg = trainx['NERC Region'].nunique()
+    nweek = len(trainx) // (168 * nreg)
+    nweek = sum(trainx['week'].diff() != 0) // nreg
+    nqrtr = sum(trainx['quarter'].diff() != 0) // nreg
+    trainx_arr = trainx['Load (MW)'].values.reshape((nqrtr, nweek, 168, nreg))
+
+    print(trainx_arr[0, 0, 0:5, 0])
+
     return 0, 0, 0, 0
 
 
@@ -69,7 +77,7 @@ def build_model(input_layer_shape, lr, cl1, cf1, cl2, cf2, l1, l2, embed_in_dim,
 
     """
     # Weekly timeseries input
-    input_numeric = layers.Input(shape=(input_layer_shape, ), name='HourlyElectricity')
+    input_numeric = layers.Input(shape=(None, input_layer_shape), name='HourlyElectricity')
 
     # The convolutional layers need input tensors with the shape (batch, steps, channels).
     # A convolutional layer is 1D in that it slides through the data length-wise,

@@ -22,16 +22,6 @@ from tensorflow.keras.utils import plot_model
 from pkg_resources import resource_filename
 
 PLOTDIR = resource_filename('eiafcst', os.path.join('models', 'diagnostic'))
-# INPUTDIR = '/Users/brau074/Documents/EIA/modeling/load/input'
-
-
-class PrintDot(keras.callbacks.Callback):
-    """Display training progress by printing a single dot for each completed epoch."""
-
-    def on_epoch_end(self, epoch, logs):
-        if epoch % 100 == 0:
-            print('')
-        print('.', end='')
 
 
 def get_args():
@@ -421,7 +411,7 @@ def main():
 
     # Record results
     with open(diag_fname, 'a') as outfile:
-        hyper_values = [str(v) for k, v in vars(args)]
+        hyper_values = [str(v) for k, v in vars(args).items()]
         diag_results = [str(r) for r in results]
         diag_values = ','.join(hyper_values + diag_results + [notes + '\n'])
         outfile.write(diag_values)
