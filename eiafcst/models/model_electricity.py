@@ -344,6 +344,9 @@ def get_args():
     parser.add_argument('-embedsize', type=int,
                         help='How many dimensions the region embedding should have (int) [default: 2]',
                         default=2)
+    parser.add_argument('-sample_size', type=int,
+                        help='How many samples of each region to include (-1 for all) [default: 1000]',
+                        default=1000)
     parser.add_argument('-model', type=str,
                         help='Save the best model with this prefix (string) [default: /training_1/model.ckpt]',
                         default=os.path.normpath('/training_1/model.ckpt'))
@@ -358,8 +361,8 @@ def main():
     # Hyperparameters passed in via command line
     args = get_args()
 
-    # FOR TESTING ONLY
-    sample_size = 1000
+    if args.sample_size is -1:
+        args.sample_size = None
 
     # Set up diagnostics
     hyperparams = [k for k in vars(args).keys()]
@@ -371,7 +374,7 @@ def main():
 
     # Run model
     results = run(args.traindata, args.lr, args.L1, args.L2, args.epochs, args.patience,
-                  args.model, args.embedsize, sample_size=sample_size, plots=True)
+                  args.model, args.embedsize, args.sample_size, plots=True)
 
     # Record results
     with open(diag_fname, 'a') as outfile:
