@@ -117,10 +117,10 @@ def guess_id_column(df):
     """Guess the index of the most useful identifying column of a DataFrame."""
     cols = list(df.columns.str.lower())
     try:
-        return cols.index('name')
+        return cols.index('id')
     except ValueError:
         try:
-            return cols.index('id')
+            return cols.index('name')
         except ValueError:
             return 0
 

@@ -9,6 +9,18 @@ import numpy as np
 from os import path
 from pkg_resources import resource_filename
 
+from tensorflow.keras.callbacks import Callback
+
+
+class PrintDot(Callback):
+    """Display training progress."""
+
+    def on_epoch_end(self, epoch, logs):
+        """Print a single dot for each completed epoch."""
+        if epoch % 100 == 0:
+            print('')
+        print('.', end='')
+
 
 def add_quarter_and_week(df, datecol):
     """

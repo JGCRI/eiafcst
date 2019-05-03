@@ -19,6 +19,9 @@ import geopandas as gpd
 import numpy as np
 import matplotlib.pyplot as plt
 
+import os
+from pkg_resources import resource_filename
+
 
 def nerc_name_to_abbr(df):
     """
@@ -28,7 +31,7 @@ def nerc_name_to_abbr(df):
     """
     rgx = r"\(([A-Za-z]+)\)"
     df.loc[:, 'NAME_ABBR'] = df['NAME'].str.extract(rgx, expand=False)
-    df[:, 'SUBNAME_ABBR'] = df['NAME_ABBR'] + "-" + df['SUBNAME'].str.extract(rgx, expand=False)
+    df.loc[:, 'SUBNAME_ABBR'] = df['NAME_ABBR'] + "-" + df['SUBNAME'].str.extract(rgx, expand=False)
 
     return df
 
@@ -67,7 +70,36 @@ def combine_nyiso(nerc_geo):
     return nerc_geo
 
 
-def main(root):
+def build_mapping_file(eia_ba_xlsx_file):
+    """
+    Build the file ba_to_agg_region.csv.
+
+    This function builds the file that maps from Balancing Authority to the
+    aggregate regions used in this modelling process. The mapping file is
+    included in this package by default, but this function shows the steps
+    used to create it.
+
+    The input to this function is the path to the official EIA list of
+    Balancing Authorities, as reported in form EIA-861 data files. For example,
+    the 2017 file is called Balancing_Authority_2017.xlsx. This data was
+    obtained here:
+        https://www.eia.gov/electricity/data/eia861/
+    """
+    bas = pd.read_excel(eia_ba_xlsx_file)
+
+    # TODO: Implement/copy from backup file
+
+    # The list of Balancing Authorities contains extra information for state
+    # and year, but we just need the unique names and ids
+    bas = bas[['BA ID', 'BA Code', 'Balancing Authority Name']].drop_duplicates()
+
+    bas_to_agg_file = resource_filename('eiafcst', os.path.join('data', 'mapping_files', 'ba_to_agg_region.csv'))
+    bas_to_agg.to_csv(bas_to_agg_file, index=False)
+
+    return bas_to_agg
+
+
+def main(outdir):
     """
     Create shapefile of aggregated regions.
 
@@ -83,18 +115,14 @@ def main(root):
     print('Reading files...')
 
     # Region mapping datasets
-    bas_file = f'{root}data/electricity/EIA data work/EIA861/f8612017/Balancing_Authority_2017.xlsx'
-    ba_to_nerc_file = f'{root}data/spatial/Balancing_Authority_to_NERC_Region.csv'
-
-    print(f'\t{bas_file}')
-    bas = pd.read_excel(bas_file)
+    ba_to_nerc_file = resource_filename('eiafcst', os.path.join('data', 'mapping_files', 'ba_to_agg_region.csv'))
 
     print(f'\t{ba_to_nerc_file}')
     ba_to_nerc = pd.read_csv(ba_to_nerc_file)
 
     # Spatial datasets
-    ba_geo_file = f'{root}data/spatial/Control_Areas/Control_Areas.shp'
-    nerc_geo_file = f'{root}data/spatial/NERC_Regions/NERC_Regions.shp'
+    ba_geo_file = resource_filename('eiafcst', os.path.join('data', 'spatial', 'Control_Areas', 'Control_Areas.shp'))
+    nerc_geo_file = resource_filename('eiafcst', os.path.join('data', 'spatial', 'NERC_Regions', 'NERC_Regions.shp'))
 
     print(f'\t{ba_geo_file}')
     ba_geo = gpd.read_file(ba_geo_file)
@@ -108,70 +136,50 @@ def main(root):
     print('\tDone.')
 
     # -------------------------------------------------------------------------
-    print('Mapping Balancing Authorities to aggregate regions...')
-
-    # Adjust metadata for mapping
-    nerc_geo = nerc_name_to_abbr(nerc_geo)
-
-    # NERC shapefile covers continental US, but we can grab AK and HI data from
-    # the Balancing Authority shapefile
-    ak_hi_geo = ba_geo.loc[ba_geo['STATE'].isin(['AK', 'HI']), :]
-    ak_hi_geo.loc[:, 'ID'] = ak_hi_geo['ID'].astype('int')
-
-    # The list of Balancing Authorities contains extra information for state
-    # and year, but we just need the unique names and ids
-    bas = bas[['BA ID', 'BA Code', 'Balancing Authority Name']].drop_duplicates()
-
-    # Make meta information for Alaska and Hawaii BAs more standard
-    ak_hi_geo = ak_hi_geo.merge(bas, left_on='ID', right_on='BA ID')
-    ak_hi_geo = ak_hi_geo[['Balancing Authority Name', 'BA Code', 'BA ID', 'BA Code', 'geometry']]
-    ak_hi_geo.columns = list(ba_to_nerc.columns) + ['geometry']
-
-    # Add Alaska and Hawaii BAs as aggregate regions
-    bas_to_agg = pd.concat([ba_to_nerc, ak_hi_geo.drop(columns='geometry')])
-
-    # Filter to just the BAs
-    bas_to_agg = bas_to_agg[bas_to_agg['EIA ID'].isin(bas['BA ID'])].reset_index(drop=True)
-
-    print('\tDone.')
-
-    # -------------------------------------------------------------------------
     print('Dissolving NERC subregions...')
 
+    bas_to_agg = pd.read_csv(ba_to_nerc_file)
+
+    nerc_geo = nerc_name_to_abbr(nerc_geo)
+
     # The NERC shapefile contains NERC subregions, but we only use them if there
-    # are Balancing Authorities that map to them (only WECC).
+    # are Balancing Authorities that map to them (WECC and NPCC).
     use_subregion = nerc_geo['SUBNAME_ABBR'].isin(bas_to_agg['NERC Region'])
     nerc_geo.loc[use_subregion, 'NAME_ABBR'] = nerc_geo.loc[use_subregion, 'SUBNAME_ABBR']
 
-    # Combine NERC subregions to aggregate NERC region (except WECC)
+    # Combine NERC subregions to aggregate NERC region (except WECC, NPCC gets split into NY and NE)
     nerc_agg_geo = nerc_geo[['NAME', 'NAME_ABBR', 'geometry']].dissolve(by=['NAME', 'NAME_ABBR'], as_index=False)
+    nerc_agg_geo.plot()
 
-    # Add AK and HI aggregate regions to the NERC regions
-    ak_hi_geo = ak_hi_geo[['Master BA Name', 'NERC Region', 'geometry']]
-    ak_hi_geo = ak_hi_geo.rename(columns={'Master BA Name': 'NAME', 'NERC Region': 'NAME_ABBR'})
+    # Add AK and HI aggregate regions to the NERC regions. The NERC shapefile
+    # covers continental US, but we can grab AK and HI data from the Balancing
+    # Authority shapefile.
+    ak_hi_geo = ba_geo.loc[ba_geo['STATE'].isin(['AK', 'HI']), :]
+    ak_hi_geo.loc[:, 'ID'] = ak_hi_geo.loc[:, 'ID'].astype('int')
+    ak_hi_geo = ak_hi_geo.merge(bas_to_agg, left_on='ID', right_on='EIA ID')
+    ak_hi_geo = ak_hi_geo[['NAME', 'NERC Region', 'geometry']]
+    ak_hi_geo = ak_hi_geo.rename(columns={'NERC Region': 'NAME_ABBR'})
 
     assert nerc_agg_geo.crs == ak_hi_geo.crs
     final_gdf = gpd.GeoDataFrame(pd.concat([nerc_agg_geo, ak_hi_geo], ignore_index=True), crs=nerc_agg_geo.crs)
+    final_gdf = final_gdf.rename(columns={'NAME_ABBR': 'ID'})
 
     # -------------------------------------------------------------------------
     print('Writing outputs...')
 
-    plot_file = f'{root}data/spatial/agg_regions.png'
-    shape_dir = f'{root}data/spatial/Aggregate_Regions'
-    bas_to_agg_file = f'{root}data/spatial/ba_to_agg_region.csv'
+    plot_file = f'{outdir}/agg_regions.png'
+    shape_dir = f'{outdir}/Aggregate_Regions'
 
     print(f'\t{plot_file}')
     plot_regions(final_gdf, plot_file)
     print(f'\t{shape_dir}')
     final_gdf.to_file(shape_dir, driver='ESRI Shapefile')
-    print(f'\t{bas_to_agg_file}')
-    bas_to_agg.to_csv(bas_to_agg_file, index=False)
 
 
 if __name__ == '__main__':
-    root = '/Users/brau074/Documents/EIA/'
-    print(f'Running shapefile creation script in {root}')
+    outdir = resource_filename('eiafcst', os.path.join('data', 'spatial'))
+    print(f'Running shapefile creation script outputting in {outdir}')
 
-    main(root)
+    main(outdir)
 
     print('\n' + '=' * 10 + ' GOODBYE AND THANKS FOR ALL THE FISH ' + '=' * 10 + '\n')
