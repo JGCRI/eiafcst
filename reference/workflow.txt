@@ -1,0 +1,9 @@
+To replicate the modeling process, follow these steps:
+
+1. Download datasets described in the eiafcst/data/ subfolders
+2. Generate first round of electricity data:
+    python eiafcst/main.py -e ./
+3. Use output load_by_sub_region_2006-2017.csv for random forest modelling of
+   missing values
+4. Generate final electricity data set:
+    python eiafcst/main.py -e -fillfile eiafcst/data/random-forest-fill-values.csv ./
