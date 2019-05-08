@@ -18,8 +18,8 @@ class PrintDot(Callback):
     def on_epoch_end(self, epoch, logs):
         """Print a single dot for each completed epoch."""
         if epoch % 100 == 0:
-            print('')
-        print('.', end='')
+            print()
+        print('.', end='', flush=True)
 
 
 def add_quarter_and_week(df, datecol):
@@ -165,6 +165,11 @@ def diagnostic_file(fname, columns):
     else:
         with open(res_fname, 'r') as results_file:
             header = results_file.readline().split(',')
+            missing = [c for c in columns if c not in header]
+            if missing:
+                print(f'{res_fname} is missing columns')
+                print(f'Required columns: {columns}')
+
             assert columns == header
 
     return res_fname

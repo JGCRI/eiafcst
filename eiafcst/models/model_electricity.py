@@ -51,7 +51,7 @@ def plot_by_region(dataset):
         plt.clf()
 
 
-def prep_data(data_file, sample_size=None, train_frac=0.8):
+def prep_data(data_file, sample_size=None, train_frac=0.8, seed=None):
     """
     Load full dataset and prepare it for the model.
 
@@ -61,25 +61,21 @@ def prep_data(data_file, sample_size=None, train_frac=0.8):
                             None (the default), uses whole dataset
     :param train_frac:      fraction (number between 0-1) of data for training
     """
-    if data_file.endswith('.csv'):
-        dataset = pd.read_csv(data_file)
-    else:
-        dataset = pd.read_pickle(data_file)
+    dataset = read_training_data(data_file)
 
     dataset = dataset.drop(columns='time')  # At this point, don't learn from other features
     dataset = dataset.rename(columns={'temperature': 'temp'})
 
-    # We don't need float64 precision
-    dataset.loc[:, ['Load (MW)', 'temp']] = dataset.loc[:, ['Load (MW)', 'temp']].astype('float32')
+    rand_state = np.random.RandomState(seed)
 
     if sample_size is not None:
         # smaller size for testing; ensure each ID gets sampled equally
-        dataset = dataset.groupby('ID', as_index=False).apply(lambda x: x.sample(sample_size))
+        dataset = dataset.groupby('ID', as_index=False).apply(lambda x: x.sample(sample_size, random_state=rand_state))
         dataset = dataset.reset_index(drop=True)
 
     # Split the dataset into a training set and a test set. We will use the
     # test set in the final evaluation of our model.
-    train_dataset = dataset.sample(frac=0.8)
+    train_dataset = dataset.sample(frac=0.8, random_state=rand_state)
     test_dataset = dataset.drop(train_dataset.index)
 
     allstats = dataset.groupby('ID').describe()
@@ -89,15 +85,15 @@ def prep_data(data_file, sample_size=None, train_frac=0.8):
     return train_dataset, test_dataset, allstats
 
 
-def run(data_file, learning_rate, l1, l2, epochs, patience, checkpoint_path,
-        embedding_size, sample_size=1000, plots=False):
+def run(data_file, learning_rate, l1, l2, epochs, patience, savefile,
+        embedding_size, seed, sample_size=1000, plots=False):
     """
     Build and train the electricity model.
 
     Creates plots of process, if specified.
     """
     # Split data into training and test datasets
-    train_dataset, test_dataset, allstats = prep_data(data_file, sample_size=sample_size)
+    train_dataset, test_dataset, allstats = prep_data(data_file, sample_size=sample_size, seed=seed)
 
     # Standardize all the data
     stdzd_train_data = standardize(train_dataset, allstats, ['Load (MW)', 'temp'])
@@ -119,20 +115,19 @@ def run(data_file, learning_rate, l1, l2, epochs, patience, checkpoint_path,
     # Build and show the model
     model = build_model(l1, l2, learning_rate, len(category_names), embedding_size)
     model.summary()
+    plot_model(model)
 
     # The patience parameter is the amount of epochs to check for improvement
     early_stop = keras.callbacks.EarlyStopping(monitor='val_loss', patience=patience, restore_best_weights=True)
-
-    # Create checkpoint callback
-    cp_callback = tf.keras.callbacks.ModelCheckpoint(checkpoint_path,
-                                                     save_weights_only=True,
-                                                     verbose=0, period=5)
 
     history = model.fit(x=[stdzd_train_data, train_region_embed_id],
                         y=stdzd_train_labels,
                         epochs=epochs, validation_split=0.2, verbose=0,
                         callbacks=[early_stop, PrintDot()])
-    print()
+
+    # Save the model!
+    if savefile is not None:
+        keras.models.save_model(model, savefile, overwrite=False, include_optimizer=True)
 
     if plots:
         plot_history(history)
@@ -141,6 +136,7 @@ def run(data_file, learning_rate, l1, l2, epochs, patience, checkpoint_path,
     # Evaluate the model on our reserved test data
     loss, mae, mse = model.evaluate([stdzd_test_data, test_region_embed_id],
                                     stdzd_test_labels, verbose=0)
+    print()
     print("Testing set standardized Mean Abs Error: {:5.3f}".format(mae))
 
     stdzd_train_predictions = model.predict([stdzd_train_data, train_region_embed_id]).flatten()
@@ -228,7 +224,7 @@ def build_model(l1, l2, lr, embed_in_dim, embed_out_dim):
 def plot_residuals(trn_resid, tst_resid, stdzd_test_data, stdzd_train_data):
     """Plot residuals."""
     plt.xlabel('Standardized Temperature')
-    plt.ylabel('Prediction residual')
+    plt.ylabel('Load Prediction residual')
     plt.scatter(stdzd_test_data, tst_resid, alpha=0.05)
     plt.scatter(stdzd_train_data, trn_resid, alpha=0.05)
     plt.savefig(f'{PLOTDIR}/residuals.png')
@@ -289,7 +285,7 @@ def plot_embeddings(embeddings, category_names):
     ax.scatter(embeddings[:, 0], embeddings[:, 1])
     for i, label in enumerate(category_names):
         ax.annotate(label, (embeddings[i, 0], embeddings[i, 1]))
-    plt.title("Embedding Values")
+    plt.title("Electric Load Embedding Values")
     plt.savefig(f'{PLOTDIR}/embeddings.png')
     plt.clf()
 
@@ -325,6 +321,62 @@ def plot_history(history):
     plt.clf()
 
 
+def generate_residuals(datafile, modelfile, sample_size=None, seed=None):
+    train_data, test_data, allstats = prep_data(datafile, sample_size=sample_size, seed=seed)
+
+    test_data = standardize(test_data, allstats, vars=['Load (MW)', 'temp'])
+    test_labels = test_data.pop('Load (MW)')
+
+    # We don't actually use training data here, but it was used for creating
+    # the embedding map
+    category_names = train_data['ID'].unique()
+    category_map = {name: id for id, name in enumerate(category_names)}
+    embed_id = test_data.pop('ID').map(category_map)
+
+    # Build and show the model
+    model = keras.models.load_model(modelfile)
+
+    # THIS SHOULD GIVE THE SAME RESULT AS THE INITIAL TRAINING
+    loss, mae, mse = model.evaluate([test_data, embed_id], test_labels, verbose=0)
+    print("Testing set standardized Mean Abs Error: {:5.3f}".format(mae))
+
+    predictions = model.predict(x=[test_data, embed_id]).flatten()
+    residuals = predictions - test_labels
+
+    print('plotting')
+    plt.xlabel('Standardized Temperature')
+    plt.ylabel('Load Prediction residual')
+    plt.scatter(test_data, residuals, alpha=0.05)
+    plt.show()
+
+    print('R^2 values:')
+    for name in category_names:
+        region_idx = (embed_id == category_map[name])
+        y = test_labels.values.flatten()[region_idx]
+        f = predictions[region_idx]
+        y_bar = y.mean()
+        ss_tot = np.sum((y - y_bar)**2)
+        ss_res = np.sum((y - f)**2)
+        r2 = 1 - (ss_res / ss_tot)
+        r2 = round(r2, 5)
+
+        print('\t' + name + ('\t' * (2 - (len(name) > 4))) + str(r2))
+
+    # This could be better to not repeat so much of the above work
+    print("Getting all residuals")
+    train_data, test_data, allstats = prep_data(datafile, sample_size=sample_size, seed=seed)
+    dataset = read_training_data(datafile)
+    all_data = pd.concat([train_data, test_data]).sort_index()
+    all_data = standardize(all_data, allstats, vars=['Load (MW)', 'temp'])
+    all_labels = all_data.pop('Load (MW)')
+    regions = all_data.pop('ID')
+    embed_id = regions.map(category_map)
+    predictions = model.predict(x=[all_data, embed_id]).flatten()
+    residuals = pd.DataFrame({'ID': regions, 'time': dataset['time'], 'residuals': predictions - all_labels})
+
+    return residuals
+
+
 def get_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser()
@@ -347,9 +399,12 @@ def get_args():
     parser.add_argument('-sample_size', type=int,
                         help='How many samples of each region to include (-1 for all) [default: 1000]',
                         default=1000)
+    parser.add_argument('-load', action='store_true', help='Load saved model and generate residuals')
+    parser.add_argument('-seed', type=int, help='Seed for RNG for train/test split (int) [default: 714]',
+                        default=714)
     parser.add_argument('-model', type=str,
-                        help='Save the best model with this prefix (string) [default: /training_1/model.ckpt]',
-                        default=os.path.normpath('/training_1/model.ckpt'))
+                        help='Save/load the best model with this prefix (string) [default: do not save]',
+                        default=None)
 
     return parser.parse_args()
 
@@ -360,12 +415,19 @@ def main():
 
     # Hyperparameters passed in via command line
     args = get_args()
+    args_dict = vars(args)
 
     if args.sample_size is -1:
         args.sample_size = None
 
+    # Use an existing model
+    if args_dict.pop('load') and args.model is not None:
+        resid = generate_residuals(args.traindata, args.model, args.sample_size, args.seed)
+        resid.to_csv(args.model.replace('.h5', '_residuals.csv'), index=False)
+        return
+
     # Set up diagnostics
-    hyperparams = [k for k in vars(args).keys()]
+    hyperparams = [k for k in args_dict.keys()]
     res_metrics = ['mae', 'mse', 'mean train residual', 'mean test residual']
     diag_headers = hyperparams + res_metrics + ['notes']
     diag_fname = diagnostic_file('elec_results.csv', diag_headers)
@@ -374,11 +436,11 @@ def main():
 
     # Run model
     results = run(args.traindata, args.lr, args.L1, args.L2, args.epochs, args.patience,
-                  args.model, args.embedsize, args.sample_size, plots=True)
+                  args.model, args.embedsize, args.seed, args.sample_size, plots=True)
 
     # Record results
     with open(diag_fname, 'a') as outfile:
-        hyper_values = [str(v) for k, v in vars(args).items()]
+        hyper_values = [str(v) for k, v in args_dict.items()]
         diag_results = [str(r) for r in results]
         diag_values = ','.join(hyper_values + diag_results + [notes + '\n'])
         outfile.write(diag_values)
