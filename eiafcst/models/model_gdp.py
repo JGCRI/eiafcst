@@ -70,7 +70,7 @@ def prep_data(xpth, ypth=None, train_frac=0.8):
     return elec_lst, gdp, gdp_stats
 
 
-def run(trainx, trainy, lr, cl1, cf1, cl2, cf2, l1, l2, epochs, patience, model, embedsize, plots=True):
+def run(trainx, trainy, lr, cl1, cf1, cl2, cf2, l1, l2, epochs, patience, model, plots=True):
     """
     Run the model.
 
@@ -86,7 +86,7 @@ def run(trainx, trainy, lr, cl1, cf1, cl2, cf2, l1, l2, epochs, patience, model,
     nregion = trainx[0].shape[2]
     assert nhrweek == 168
 
-    model = build_model(nhrweek, lr, cl1, cf1, cl2, cf2, l1, l2, nregion, embedsize)
+    model = build_model(nhrweek, lr, cl1, cf1, cl2, cf2, l1, l2)
 
     model.summary()
 
@@ -95,7 +95,7 @@ def run(trainx, trainy, lr, cl1, cf1, cl2, cf2, l1, l2, epochs, patience, model,
     return 0, 0, 0, 0
 
 
-def build_model(input_layer_shape, lr, cl1, cf1, cl2, cf2, l1, l2, embed_in_dim, embed_out_dim):
+def build_model(input_layer_shape, lr, cl1, cf1, cl2, cf2, l1, l2):
     """
     Build the convolutional neural network.
 
@@ -112,8 +112,7 @@ def build_model(input_layer_shape, lr, cl1, cf1, cl2, cf2, l1, l2, embed_in_dim,
         hours = 168, the number of hours in a week (fixed)
         regions = number of spatial regions (fixed)
 
-    We need two additional inputs:
-        embedding = array of region embeddings
+    We need an additional inputs:
         timestep = value representing time since the start of the data
 
     """
@@ -134,22 +133,15 @@ def build_model(input_layer_shape, lr, cl1, cf1, cl2, cf2, l1, l2, embed_in_dim,
     dropo = layers.Dropout(0.5, name='DropHalf')(pool2)
     feature_layer = layers.Flatten()(dropo)
 
-    # Time since start input (for dealing with energy efficiency changes)
-    input_time = layers.Input(shape=(1,), name='TimeSinceStart')
-
-    # Region embbeding input
-    input_cat = layers.Input(shape=(1,), name='RegionalEmbedding')
-    embed_layer = layers.Embedding(embed_in_dim, embed_out_dim)(input_cat)
-    embed_layer = layers.Flatten()(embed_layer)
-
     # Merge the inputs together and end our encoding with fully connected layers
-    merged_layer = layers.Concatenate()([feature_layer, input_time, embed_layer])
-    merged_layer = layers.Dense(l1, activation='relu')(merged_layer)
-    encoded = layers.Dense(l2, activation='relu')(merged_layer)
+    encoded = layers.Dense(l1, activation='relu')(feature_layer)
+    encoded = layers.Dense(l2, activation='relu', name='FinalEncoding')(encoded)
 
     # At this point, the representation is the most encoded and small
     # Now let's build the decoder
-    x = layers.Reshape((l2, 1))(encoded)
+    x = layers.Dense(l1, activation='relu')(encoded)
+    x = layers.Dense(cf2 * cl2, activation='relu')(x)
+    x = layers.Reshape((cl2, 1))(x)
     x = layers.Conv1D(filters=cf2, kernel_size=cl2, padding='same', activation='relu')(x)
     x = layers.UpSampling1D(12)(x)
     x = layers.Conv1D(filters=cf1, kernel_size=cl1, padding='same', activation='relu')(x)
@@ -158,10 +150,15 @@ def build_model(input_layer_shape, lr, cl1, cf1, cl2, cf2, l1, l2, embed_in_dim,
     decoded = layers.Flatten(name='DecoderOutput')(x)
     # decoder = keras.models.Model(decoder_input, decoded)
 
-    # This is our actual output, the GDP prediction
-    output = layers.Dense(1, name='GDP_Output')(encoded)
+    # Time since start input (for dealing with energy efficiency changes)
+    input_time = layers.Input(shape=(1,), name='TimeSinceStart')
 
-    autoencoder = keras.models.Model([input_numeric, input_time, input_cat], [output, decoded])
+    # This is our actual output, the GDP prediction
+    merged_layer = layers.Concatenate()([encoded, input_time])
+    output = layers.Dense(8)(merged_layer)
+    output = layers.Dense(1, name='GDP_Output')(output)
+
+    autoencoder = keras.models.Model([input_numeric, input_time], [output, decoded])
 
     optimizer = tf.keras.optimizers.RMSprop(lr=lr)
 
@@ -198,17 +195,14 @@ def get_args():
                         help='The number of units in the first hidden layer (int) [default: 16]',
                         default=16)
     parser.add_argument('-L2', type=int,
-                        help='The number of units in the first hidden layer (int) [default: 16]',
-                        default=16)
+                        help='The number of units in the first hidden layer (int) [default: 8]',
+                        default=8)
 
     # General model parameters
     parser.add_argument('-epochs', type=int, help='The number of epochs to train for', default=1000)
     parser.add_argument('-patience', type=int,
                         help='How many epochs to continue training without improving dev accuracy (int) [default: 20]',
                         default=20)
-    parser.add_argument('-embedsize', type=int,
-                        help='How many dimensions the region embedding should have (int) [default: 5]',
-                        default=5)
     parser.add_argument('-model', type=str,
                         help='Save the best model with this prefix (string) [default: /training_1/model.ckpt]',
                         default=os.path.normpath('/training_1/model.ckpt'))
@@ -233,7 +227,7 @@ def main():
 
     # Run model
     results = run(args.trainx, args.trainy, args.lr, args.CL1, args.CF1, args.CL2, args.CF2, args.L1,
-                  args.L2, args.epochs, args.patience, args.model, args.embedsize, plots=True)
+                  args.L2, args.epochs, args.patience, args.model, plots=True)
 
     # Record results
     with open(diag_fname, 'a') as outfile:
