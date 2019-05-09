@@ -20,6 +20,7 @@ import time
 import os
 
 from eiafcst.dataprep.utils import *
+from eiafcst.dataprep.economic import parse_gdp
 
 import tensorflow as tf
 from tensorflow import keras
@@ -29,27 +30,67 @@ from tensorflow.keras.utils import plot_model
 from pkg_resources import resource_filename
 
 
-def run(trainx, trainy, lr, cl1, cf1, cl2, cf2, l1, l2, epochs, patience, model, embedsize, plots=True):
+def prep_data(xpth, ypth=None, train_frac=0.8):
+    """
+    Combine gas and temperature datasets and prepare them for the model.
 
-    nregion = 14  # Number of aggregate electricity regions
-    model = build_model(168, lr, cl1, cf1, cl2, cf2, l1, l2, nregion, embedsize)
+    :param xpth:        path to .pkl or .csv file containing electricity
+                        residuals by hour
+    :param ypth:        path to .csv file containing GDP data, as downloaded
+                        from the BEA website
+    :param train_frac:  fraction (number between 0-1) of data for training
+    """
+    HR_WK = 24 * 7  # hours in a week
+
+    xpth = '/Users/brau074/Documents/EIA/eiafcst/eiafcst/models/electricity/elec_model5_residuals.csv'
+    elec_residuals = read_training_data(xpth)
+    elec_residuals = add_quarter_and_week(elec_residuals, 'time')
+    gdp = parse_gdp(syear=elec_residuals['EconYear'].min(), eyear=elec_residuals['EconYear'].max())
+
+    # Display dataset statistics that we'll use for standardization
+    gdp_stats = gdp['gdp'].describe()
+    print("\nInput dataset summary:")
+    print(gdp_stats.transpose(), "\n")
+
+    # Our goal is an array of cases [year-quarters] with dimensions [weeks, hours, regions]
+    elec_residuals = elec_residuals.sort_values(['EconYear', 'quarter', 'week', 'time', 'ID'])
+    nreg = len(elec_residuals.ID.unique())
+    nqtr = len(elec_residuals.EconYear.unique()) * 4
+
+    elec_arr = elec_residuals.residuals.values
+
+    qtr_bounds = np.where(elec_residuals['quarter'].diff())[0]
+    qtr_bounds = qtr_bounds[1:]  # Only need inside bounds
+    elec_lst = np.array_split(elec_arr, qtr_bounds)
+    elec_lst = [a.reshape(-1, HR_WK, nreg) for a in elec_lst]
+
+    assert len(gdp) == nqtr
+
+    # Array with dimensions [weeks, regions]
+    return elec_lst, gdp, gdp_stats
+
+
+def run(trainx, trainy, lr, cl1, cf1, cl2, cf2, l1, l2, epochs, patience, model, embedsize, plots=True):
+    """
+    Run the model.
+
+    Does some cool stuff.
+    """
+    trainx = '/Users/brau074/Documents/EIA/eiafcst/eiafcst/models/electricity/elec_model5_residuals.csv'
+
+    # trainx is reshaped into list of arrays of quarterly vals [weeks, hours, regions]
+    trainx, trainy, allstats = prep_data(trainx)
+
+    # Number of aggregate electricity regions
+    nhrweek = trainx[0].shape[1]
+    nregion = trainx[0].shape[2]
+    assert nhrweek == 168
+
+    model = build_model(nhrweek, lr, cl1, cf1, cl2, cf2, l1, l2, nregion, embedsize)
 
     model.summary()
 
     plot_model(model, to_file='gdp_model.png', show_shapes=True, show_layer_names=True)
-
-    trainx = pd.read_pickle('load_by_agg_region_2006-2017.pkl')
-    trainx = read_training_data('load_by_agg_region_2006-2017.csv')
-
-    # Array with dimensions [quarters, weeks, regions]
-    trainx = trainx.sort_values(['NERC Region', 'EconYear', 'quarter', 'week'])
-    nreg = trainx['NERC Region'].nunique()
-    nweek = len(trainx) // (168 * nreg)
-    nweek = sum(trainx['week'].diff() != 0) // nreg
-    nqrtr = sum(trainx['quarter'].diff() != 0) // nreg
-    trainx_arr = trainx['Load (MW)'].values.reshape((nqrtr, nweek, 168, nreg))
-
-    print(trainx_arr[0, 0, 0:5, 0])
 
     return 0, 0, 0, 0
 
