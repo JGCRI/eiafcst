@@ -62,7 +62,7 @@ def prep_data(xpth, ypth=None, train_frac=0.8):
     qtr_bounds = np.where(elec_residuals['quarter'].diff())[0]
     qtr_bounds = qtr_bounds[1:]  # Only need inside bounds
     elec_lst = np.array_split(elec_arr, qtr_bounds)
-    elec_lst = [a.reshape(-1, HR_WK, nreg) for a in elec_lst]
+    elec_lst = np.array([a.reshape(-1, HR_WK, nreg) for a in elec_lst])
 
     assert len(gdp) == nqtr
 
@@ -86,16 +86,57 @@ def run(trainx, trainy, lr, cl1, cf1, cl2, cf2, l1, l2, epochs, patience, model,
     nregion = trainx[0].shape[2]
     assert nhrweek == 168
 
-    model = build_model(nhrweek, lr, cl1, cf1, cl2, cf2, l1, l2)
+    ncases = len(trainx)
+
+    rand_idx = np.random.permutation(ncases)
+    split_idx = int(ncases * 0.75)
+
+    valid_timesteps = rand_idx[split_idx:]
+    train_timesteps = rand_idx[:split_idx]
+    validx = trainx[valid_timesteps]
+    trainx = trainx[train_timesteps]
+    validy = trainy.gdp.values[valid_timesteps]
+    trainy = trainy.gdp.values[train_timesteps]
+
+    model = build_model(nhrweek, nregion, lr, cl1, cf1, cl2, cf2, l1, l2)
 
     model.summary()
 
     plot_model(model, to_file='gdp_model.png', show_shapes=True, show_layer_names=True)
 
+    # The input arrays have 2 dimensions of variable size:
+    #  1. The number of cases (quarters)
+    #  2. The number of weeks in a case
+    # The data therefore cannot be represented as a numpy array because not
+    # all dimensions match. To work around this, the data is provided from a
+    # generator where each batch is one case, so the input array has a fixed
+    # number of weeks (although this number is variable in each batch) and can
+    # be represented in a 3d numpy array.
+    def batch_generator(inputs, timestep, labels):
+        i = 0
+        while True:
+            batch = inputs[i % len(inputs)]
+            # print(f'batch # {i} \t timestep {timestep[i]} \t batch.shape {batch.shape}')
+            ts = np.repeat(timestep[i % len(inputs)], batch.shape[0])
+            labs = np.repeat(labels[i % len(inputs)], batch.shape[0])
+            yield ([batch, ts], [labs, batch])
+
+    # The patience parameter is the amount of epochs to check for improvement
+    early_stop = keras.callbacks.EarlyStopping(
+        monitor='DecoderOutput_loss', patience=patience, restore_best_weights=True)
+
+    model.fit_generator(generator=batch_generator(trainx, train_timesteps, trainy),
+                        steps_per_epoch=len(trainx),
+                        epochs=epochs,
+                        verbose=0,
+                        callbacks=[early_stop, PrintDot()],
+                        validation_data=batch_generator(validx, valid_timesteps, validy),
+                        validation_steps=len(validx))
+
     return 0, 0, 0, 0
 
 
-def build_model(input_layer_shape, lr, cl1, cf1, cl2, cf2, l1, l2):
+def build_model(nhr, nreg, lr, cl1, cf1, cl2, cf2, l1, l2):
     """
     Build the convolutional neural network.
 
@@ -117,16 +158,17 @@ def build_model(input_layer_shape, lr, cl1, cf1, cl2, cf2, l1, l2):
 
     """
     # Weekly timeseries input
-    input_numeric = layers.Input(shape=(None, input_layer_shape), name='HourlyElectricity')
+    input_numeric = layers.Input(shape=(nhr, nreg), name='HourlyElectricity')
 
     # The convolutional layers need input tensors with the shape (batch, steps, channels).
     # A convolutional layer is 1D in that it slides through the data length-wise,
     # moving along just one dimension. Our data just has one channel, so we can reshape
     # it to start.
-    input_reshaped = layers.Reshape((input_layer_shape, 1))(input_numeric)
+    # input_reshaped = layers.Reshape((nhr, 1))(input_numeric)
 
     # Conv1D parameters: Conv1D(filters, kernel_size, ...)
-    conv1 = layers.Conv1D(cf1, cl1, padding='same', activation='relu', name='Convolution1')(input_reshaped)
+    # conv1 = layers.Conv1D(cf1, cl1, padding='same', activation='relu', name='Convolution1')(input_reshaped)
+    conv1 = layers.Conv1D(cf1, cl1, padding='same', activation='relu', name='Convolution1')(input_numeric)
     pool1 = layers.MaxPool1D(name='MaxPool1')(conv1)
     conv2 = layers.Conv1D(cf2, cl2, padding='same', activation='relu', name='Convolution2')(pool1)
     pool2 = layers.MaxPool1D(12, name='MaxPool2')(conv2)
@@ -141,21 +183,19 @@ def build_model(input_layer_shape, lr, cl1, cf1, cl2, cf2, l1, l2):
     # Now let's build the decoder
     x = layers.Dense(l1, activation='relu')(encoded)
     x = layers.Dense(cf2 * cl2, activation='relu')(x)
-    x = layers.Reshape((cl2, 1))(x)
+    x = layers.Reshape((cl2, cf2), name='UnFlatten')(x)
     x = layers.Conv1D(filters=cf2, kernel_size=cl2, padding='same', activation='relu')(x)
     x = layers.UpSampling1D(12)(x)
     x = layers.Conv1D(filters=cf1, kernel_size=cl1, padding='same', activation='relu')(x)
     x = layers.UpSampling1D()(x)
-    x = layers.Conv1D(filters=1, kernel_size=cl1, padding='same', activation='relu')(x)
-    decoded = layers.Flatten(name='DecoderOutput')(x)
-    # decoder = keras.models.Model(decoder_input, decoded)
+    decoded = layers.Conv1D(filters=nreg, kernel_size=cl1, padding='same', activation='relu', name='DecoderOutput')(x)
 
     # Time since start input (for dealing with energy efficiency changes)
     input_time = layers.Input(shape=(1,), name='TimeSinceStart')
 
     # This is our actual output, the GDP prediction
     merged_layer = layers.Concatenate()([encoded, input_time])
-    output = layers.Dense(8)(merged_layer)
+    output = layers.Dense(8, name='OutputHiddenLayer')(merged_layer)
     output = layers.Dense(1, name='GDP_Output')(output)
 
     autoencoder = keras.models.Model([input_numeric, input_time], [output, decoded])
