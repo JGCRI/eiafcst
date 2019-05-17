@@ -30,6 +30,10 @@ from tensorflow.keras.utils import plot_model
 from pkg_resources import resource_filename
 
 
+def unstandardize(gdp_stats, val):
+    return round(val * gdp_stats['std'] + gdp_stats['mean'], 2)
+
+
 def prep_data(xpth, ypth=None, train_frac=0.8):
     """
     Combine gas and temperature datasets and prepare them for the model.
@@ -42,7 +46,6 @@ def prep_data(xpth, ypth=None, train_frac=0.8):
     """
     HR_WK = 24 * 7  # hours in a week
 
-    xpth = '/Users/brau074/Documents/EIA/eiafcst/eiafcst/models/electricity/elec_model5_residuals.csv'
     elec_residuals = read_training_data(xpth)
     elec_residuals = add_quarter_and_week(elec_residuals, 'time')
     gdp = parse_gdp(syear=elec_residuals['EconYear'].min(), eyear=elec_residuals['EconYear'].max())
@@ -76,27 +79,35 @@ def run(trainx, trainy, lr, cl1, cf1, cl2, cf2, l1, l2, epochs, patience, model,
 
     Does some cool stuff.
     """
-    trainx = '/Users/brau074/Documents/EIA/eiafcst/eiafcst/models/electricity/elec_model5_residuals.csv'
+    # trainx = '/Users/brau074/Documents/EIA/eiafcst/eiafcst/models/electricity/elec_model5_residuals.csv'
 
     # trainx is reshaped into list of arrays of quarterly vals [weeks, hours, regions]
-    trainx, trainy, allstats = prep_data(trainx)
+    values, labels, gdp_stats = prep_data(trainx)
 
-    # Number of aggregate electricity regions
-    nhrweek = trainx[0].shape[1]
-    nregion = trainx[0].shape[2]
+    # standardize GDP values (elec values already standardized from prev. model)
+    labels['gdp'] = (labels['gdp'] - gdp_stats['mean']) / gdp_stats['std']
+
+    # Number of hours (168), aggregate electricity regions (14), and cases
+    nhrweek = values[0].shape[1]
+    nregion = values[0].shape[2]
     assert nhrweek == 168
+    ncases = len(values)
 
-    ncases = len(trainx)
-
+    # Randomly choose which cases are for training the model, which are for
+    # model validation, and which are set aside for testing. The test set
+    # and validation sets each contain 1/5 of all cases. Therefore the validation
+    # set is 1/4 the size of the training set.
     rand_idx = np.random.permutation(ncases)
-    split_idx = int(ncases * 0.75)
+    train_idx, valid_idx, test_idx = np.split(rand_idx, [int(ncases * (3 / 5)), int(ncases * (4 / 5))])
 
-    valid_timesteps = rand_idx[split_idx:]
-    train_timesteps = rand_idx[:split_idx]
-    validx = trainx[valid_timesteps]
-    trainx = trainx[train_timesteps]
-    validy = trainy.gdp.values[valid_timesteps]
-    trainy = trainy.gdp.values[train_timesteps]
+    trainx = values[train_idx]
+    validx = values[valid_idx]
+    testx = values[test_idx]
+    trainy = labels.gdp.values[train_idx]
+    validy = labels.gdp.values[valid_idx]
+    testy = labels.gdp.values[test_idx]
+    train_timesteps = train_idx
+    valid_timesteps = valid_idx
 
     model = build_model(nhrweek, nregion, lr, cl1, cf1, cl2, cf2, l1, l2)
 
@@ -115,25 +126,64 @@ def run(trainx, trainy, lr, cl1, cf1, cl2, cf2, l1, l2, epochs, patience, model,
     def batch_generator(inputs, timestep, labels):
         i = 0
         while True:
+            # print(f'Input length: {len(inputs)}\tBATCH #{i % len(inputs)}')
             batch = inputs[i % len(inputs)]
-            # print(f'batch # {i} \t timestep {timestep[i]} \t batch.shape {batch.shape}')
             ts = np.repeat(timestep[i % len(inputs)], batch.shape[0])
             labs = np.repeat(labels[i % len(inputs)], batch.shape[0])
             yield ([batch, ts], [labs, batch])
+            i += 1
 
     # The patience parameter is the amount of epochs to check for improvement
-    early_stop = keras.callbacks.EarlyStopping(
-        monitor='DecoderOutput_loss', patience=patience, restore_best_weights=True)
+    early_stop = keras.callbacks.EarlyStopping(monitor='val_loss', patience=patience, restore_best_weights=True)
 
-    model.fit_generator(generator=batch_generator(trainx, train_timesteps, trainy),
-                        steps_per_epoch=len(trainx),
-                        epochs=epochs,
-                        verbose=0,
-                        callbacks=[early_stop, PrintDot()],
-                        validation_data=batch_generator(validx, valid_timesteps, validy),
-                        validation_steps=len(validx))
+    history = model.fit_generator(generator=batch_generator(trainx, train_timesteps, trainy),
+                                  steps_per_epoch=len(trainx),
+                                  epochs=epochs,
+                                  verbose=0,
+                                  callbacks=[early_stop],
+                                  validation_data=batch_generator(validx, valid_timesteps, validy),
+                                  validation_steps=len(validx))
 
-    return 0, 0, 0, 0
+    plot_history(history,
+                 cols=['DecoderOutput_mean_absolute_error', 'val_DecoderOutput_mean_absolute_error',
+                       'GDP_Output_mean_absolute_error', 'val_GDP_Output_mean_absolute_error'],
+                 labs=['Train Decoder Error', 'Val Decoder Error', 'Train GDP Error', 'Val GDP Error'],
+                 savefile='gdp_train_history.png')
+
+    train_predictions = np.empty(len(trainx))
+    print('Predicting GDP with training data')
+    for i in range(len(trainx)):
+        train_pred = model.predict([trainx[i], np.repeat(train_timesteps[i], trainx[i].shape[0])], batch_size=1)[0]
+        train_pred = train_pred.mean().round(6)
+        train_predictions[i] = train_pred
+        print(f'Predicted: ${unstandardize(gdp_stats, train_pred)}\tActual: ${unstandardize(gdp_stats, trainy[i])}')
+
+    print('Predicting GDP with test data')
+    test_predictions = np.empty(len(testx))
+    for i in range(len(testx)):
+        test_pred = model.predict([testx[i], np.repeat(test_idx[i], testx[i].shape[0])], batch_size=1)[0]
+        test_pred = test_pred.mean().round(6)
+        test_predictions[i] = test_pred
+        print(f'Predicted: ${unstandardize(gdp_stats, test_pred)}\tActual: ${unstandardize(gdp_stats, testy[i])}')
+
+    print(f"Test residuals mean {np.mean(test_predictions - testy)}")
+    print(f"Training residuals mean {np.mean(train_predictions - trainy)}")
+
+    plt.xlabel('Timestep')
+    plt.ylabel('Prediction residual')
+    plt.scatter(test_idx, test_predictions - testy, c='#ef8a62', label='test')
+    plt.scatter(train_idx, train_predictions - trainy, c='#67a9cf', label='train')
+    plt.title('Residuals')
+    plt.legend()
+    plt.show()
+    plt.clf()
+
+    hist = pd.DataFrame(history.history)
+
+    best = hist['val_loss'].idxmin()
+
+    return hist.loc[best, ['DecoderOutput_mean_absolute_error', 'val_DecoderOutput_mean_absolute_error',
+                           'GDP_Output_mean_absolute_error', 'val_GDP_Output_mean_absolute_error']]
 
 
 def build_model(nhr, nreg, lr, cl1, cf1, cl2, cf2, l1, l2):
@@ -162,12 +212,9 @@ def build_model(nhr, nreg, lr, cl1, cf1, cl2, cf2, l1, l2):
 
     # The convolutional layers need input tensors with the shape (batch, steps, channels).
     # A convolutional layer is 1D in that it slides through the data length-wise,
-    # moving along just one dimension. Our data just has one channel, so we can reshape
-    # it to start.
-    # input_reshaped = layers.Reshape((nhr, 1))(input_numeric)
+    # moving along just one dimension.
 
     # Conv1D parameters: Conv1D(filters, kernel_size, ...)
-    # conv1 = layers.Conv1D(cf1, cl1, padding='same', activation='relu', name='Convolution1')(input_reshaped)
     conv1 = layers.Conv1D(cf1, cl1, padding='same', activation='relu', name='Convolution1')(input_numeric)
     pool1 = layers.MaxPool1D(name='MaxPool1')(conv1)
     conv2 = layers.Conv1D(cf2, cl2, padding='same', activation='relu', name='Convolution2')(pool1)
@@ -188,22 +235,23 @@ def build_model(nhr, nreg, lr, cl1, cf1, cl2, cf2, l1, l2):
     x = layers.UpSampling1D(12)(x)
     x = layers.Conv1D(filters=cf1, kernel_size=cl1, padding='same', activation='relu')(x)
     x = layers.UpSampling1D()(x)
-    decoded = layers.Conv1D(filters=nreg, kernel_size=cl1, padding='same', activation='relu', name='DecoderOutput')(x)
+    decoded = layers.Conv1D(filters=nreg, kernel_size=cl1, padding='same',
+                            activation='relu', name='DecoderOutput')(x)
 
     # Time since start input (for dealing with energy efficiency changes)
     input_time = layers.Input(shape=(1,), name='TimeSinceStart')
 
     # This is our actual output, the GDP prediction
     merged_layer = layers.Concatenate()([encoded, input_time])
-    output = layers.Dense(8, name='OutputHiddenLayer')(merged_layer)
-    output = layers.Dense(1, name='GDP_Output')(output)
+    output = layers.Dense(8, activation='relu', name='OutputHiddenLayer',)(merged_layer)
+    output = layers.Dense(1, activation='linear', name='GDP_Output')(output)
 
     autoencoder = keras.models.Model([input_numeric, input_time], [output, decoded])
 
-    optimizer = tf.keras.optimizers.RMSprop(lr=lr)
-
-    autoencoder.compile(loss='mean_squared_error',
-                        optimizer=optimizer,
+    # Specify loss functions and weights for each output
+    autoencoder.compile(loss={'GDP_Output': 'mean_squared_error', 'DecoderOutput': 'mean_squared_error'},
+                        loss_weights={'GDP_Output': 0.25, 'DecoderOutput': 0.75},
+                        optimizer=tf.keras.optimizers.RMSprop(lr=lr),
                         metrics=['mean_absolute_error', 'mean_squared_error'])
     return autoencoder
 
@@ -218,11 +266,11 @@ def get_args():
 
     # CNN parameters
     parser.add_argument('-CL1', type=int,
-                        help='The number of units in the first convolutional layer\'s kernel (int) [default: 7]',
-                        default=7)
+                        help='The length of the first convolutional layer\'s kernel (int) [default: 8]',
+                        default=8)
     parser.add_argument('-CF1', type=int,
-                        help='The number of filters (channels) in the first convolutional layer (int) [default: 3]',
-                        default=3)
+                        help='The number of filters (channels) in the first convolutional layer (int) [default: 20]',
+                        default=20)
     parser.add_argument('-CL2', type=int,
                         help='The number of units in the second convolutional layer\'s kernel (int) [default: 7]',
                         default=7)
@@ -259,11 +307,11 @@ def main():
 
     # Set up diagnostics
     hyperparams = [k for k in vars(args).keys()]
-    res_metrics = ['mae', 'mse', 'mean train residual', 'mean test residual']
+    res_metrics = ['decoder_mae', 'dev_decoder_mae', 'GDP_mae', 'dev_GDP_mae']
     diag_headers = hyperparams + res_metrics + ['notes']
     diag_fname = diagnostic_file('gdp_results.csv', diag_headers)
 
-    notes = 'Still implementing...'
+    notes = 'Decoder weight 0.75'
 
     # Run model
     results = run(args.trainx, args.trainy, args.lr, args.CL1, args.CF1, args.CL2, args.CF2, args.L1,
@@ -272,7 +320,7 @@ def main():
     # Record results
     with open(diag_fname, 'a') as outfile:
         hyper_values = [str(v) for k, v in vars(args).items()]
-        diag_results = [str(r) for r in results]
+        diag_results = [str(round(r, 4)) for r in results]
         diag_values = ','.join(hyper_values + diag_results + [notes + '\n'])
         outfile.write(diag_values)
 

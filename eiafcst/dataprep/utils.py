@@ -210,3 +210,34 @@ def combine_elec_and_temperature(elec, temp):
 
     data.to_csv(resource_filename('eiafcst', '../load_and_temp_full.csv'), index=False)
     data.to_pickle(resource_filename('eiafcst', '../load_and_temp_full.pkl'))
+
+
+def plot_history(history, xlab='Epoch', ylab='Mean Abs Error', cols=[], labs=[], savefile=None, ylim=1.0):
+    """
+    Visualize the model's training progress using the stats stored in the
+    history object.
+    """
+    import matplotlib.pyplot as plt
+
+    if len(labs) != len(cols):
+        labs = cols
+
+    hist = pd.DataFrame(history.history)
+
+    plt.figure()
+    plt.xlabel(xlab)
+    plt.ylabel(ylab)
+    plt.ylim((0, ylim))
+    plt.title('Training Performance')
+
+    for i, var in enumerate(cols):
+        plt.plot(hist.index, hist[var], label=labs[i])
+
+    plt.legend()
+
+    if savefile is not None:
+        plt.savefig(savefile)
+    else:
+        plt.show()
+
+    plt.clf()
