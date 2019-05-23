@@ -19,6 +19,7 @@ import argparse
 import time
 import os
 
+from eiafcst.dataprep import FuelParser
 from eiafcst.dataprep.utils import *
 from eiafcst.dataprep.economic import parse_gdp
 
@@ -32,6 +33,36 @@ from pkg_resources import resource_filename
 
 def unstandardize(gdp_stats, val):
     return round(val * gdp_stats['std'] + gdp_stats['mean'], 2)
+
+
+def load_natural_gas(fp, years):
+    """
+    Prepare the natural gas data as as input to the GDP model.
+
+    Filters out categories like residential consumption and electric power, as
+    those categories are presumably just repeating information provided by the
+    electricity inputs.
+
+    :param fp:      FuelParser object
+    :param years:   Sequence of years to filter gas data to
+    """
+    gas = fp.parse('gas')
+
+    # Filter to correct years and best GDP categories.
+    gas_gdp_categories = ['Industrial Consumption', 'Lease and Plant Fuel Consumption', 'Pipeline & Distrubtion Use']
+    gas = gas[gas['EconYear'].isin(years)]
+    gas = gas[gas['end_use'].isin(gas_gdp_categories)]
+
+    # Aggregate categories to weekly total
+    gas = gas.groupby(['EconYear', 'quarter', 'week'], as_index=False).agg({'MMcf': 'sum'})
+
+    # Standardize
+    gas['MMcf'] = (gas['MMcf'] - gas['MMcf'].mean()) / gas['MMcf'].std()
+
+    # Add case (quarter) number
+    gas['case'] = (gas['EconYear'] - gas['EconYear'].min()) * 4 + gas['quarter'] - 1
+
+    return gas
 
 
 def prep_data(xpth, ypth=None, train_frac=0.8):
@@ -73,7 +104,7 @@ def prep_data(xpth, ypth=None, train_frac=0.8):
     return elec_lst, gdp, gdp_stats
 
 
-def run(trainx, trainy, lr, cl1, cf1, cl2, cf2, l1, l2, epochs, patience, model, plots=True):
+def run(trainx, trainy, lr, wg, wd, cl1, cf1, cl2, cf2, l1, l2, epochs, patience, model, plots=True):
     """
     Run the model.
 
@@ -83,7 +114,6 @@ def run(trainx, trainy, lr, cl1, cf1, cl2, cf2, l1, l2, epochs, patience, model,
 
     # trainx is reshaped into list of arrays of quarterly vals [weeks, hours, regions]
     values, labels, gdp_stats = prep_data(trainx)
-
     # standardize GDP values (elec values already standardized from prev. model)
     labels['gdp'] = (labels['gdp'] - gdp_stats['mean']) / gdp_stats['std']
 
@@ -97,7 +127,8 @@ def run(trainx, trainy, lr, cl1, cf1, cl2, cf2, l1, l2, epochs, patience, model,
     # model validation, and which are set aside for testing. The test set
     # and validation sets each contain 1/5 of all cases. Therefore the validation
     # set is 1/4 the size of the training set.
-    rand_idx = np.random.permutation(ncases)
+    np.random.seed(42)
+    rand_idx = np.random.permutation(ncases)  # 27, 40, 26, 43
     train_idx, valid_idx, test_idx = np.split(rand_idx, [int(ncases * (3 / 5)), int(ncases * (4 / 5))])
 
     trainx = values[train_idx]
@@ -109,7 +140,14 @@ def run(trainx, trainy, lr, cl1, cf1, cl2, cf2, l1, l2, epochs, patience, model,
     train_timesteps = train_idx
     valid_timesteps = valid_idx
 
-    model = build_model(nhrweek, nregion, lr, cl1, cf1, cl2, cf2, l1, l2)
+    # Separate the natural gas data into cases matching the gdp and electricity inputs
+    fp = FuelParser.FuelParser()
+    gas = load_natural_gas(fp, labels['EconYear'])
+    train_gas = [gas.loc[gas['case'] == i, 'MMcf'].values for i in train_idx]
+    valid_gas = [gas.loc[gas['case'] == i, 'MMcf'].values for i in valid_idx]
+    test_gas = [gas.loc[gas['case'] == i, 'MMcf'].values for i in test_idx]
+
+    model = build_model(nhrweek, nregion, lr, wg, wd, cl1, cf1, cl2, cf2, l1, l2)
 
     model.summary()
 
@@ -123,25 +161,26 @@ def run(trainx, trainy, lr, cl1, cf1, cl2, cf2, l1, l2, epochs, patience, model,
     # generator where each batch is one case, so the input array has a fixed
     # number of weeks (although this number is variable in each batch) and can
     # be represented in a 3d numpy array.
-    def batch_generator(inputs, timestep, labels):
+    def batch_generator(ele_residuals, timestep, gas_residuals, labels):
         i = 0
         while True:
-            # print(f'Input length: {len(inputs)}\tBATCH #{i % len(inputs)}')
-            batch = inputs[i % len(inputs)]
-            ts = np.repeat(timestep[i % len(inputs)], batch.shape[0])
-            labs = np.repeat(labels[i % len(inputs)], batch.shape[0])
-            yield ([batch, ts], [labs, batch])
+            # print(f'Input length: {len(elec_residuals)}\tBATCH #{i % len(elec_residuals)}')
+            ele = ele_residuals[i % len(ele_residuals)]
+            gas = gas_residuals[i % len(ele_residuals)]
+            ts = np.repeat(timestep[i % len(ele_residuals)], ele.shape[0])
+            labs = np.repeat(labels[i % len(ele_residuals)], ele.shape[0])
+            yield ([ele, ts, gas], [labs, ele])
             i += 1
 
     # The patience parameter is the amount of epochs to check for improvement
     early_stop = keras.callbacks.EarlyStopping(monitor='val_loss', patience=patience, restore_best_weights=True)
 
-    history = model.fit_generator(generator=batch_generator(trainx, train_timesteps, trainy),
+    history = model.fit_generator(generator=batch_generator(trainx, train_timesteps, train_gas, trainy),
                                   steps_per_epoch=len(trainx),
                                   epochs=epochs,
                                   verbose=0,
                                   callbacks=[early_stop],
-                                  validation_data=batch_generator(validx, valid_timesteps, validy),
+                                  validation_data=batch_generator(validx, valid_timesteps, valid_gas, validy),
                                   validation_steps=len(validx))
 
     plot_history(history,
@@ -150,43 +189,67 @@ def run(trainx, trainy, lr, cl1, cf1, cl2, cf2, l1, l2, epochs, patience, model,
                  labs=['Train Decoder Error', 'Val Decoder Error', 'Train GDP Error', 'Val GDP Error'],
                  savefile='gdp_train_history.png')
 
+    # Evaluate the model on our validation set
+    metrics = model.evaluate_generator(generator=batch_generator(validx, valid_timesteps, valid_gas, validy),
+                                       steps=len(validx))
+
+    gdp_mae = metrics[3]
+    dec_mae = metrics[5]
+
     train_predictions = np.empty(len(trainx))
+    train_residuals = np.empty(len(trainx))
     print('Predicting GDP with training data')
     for i in range(len(trainx)):
-        train_pred = model.predict([trainx[i], np.repeat(train_timesteps[i], trainx[i].shape[0])], batch_size=1)[0]
-        train_pred = train_pred.mean().round(6)
+        train_pred = model.predict([trainx[i], np.repeat(
+            train_timesteps[i], trainx[i].shape[0]), train_gas[i]], batch_size=1)[0]
+        train_pred = unstandardize(gdp_stats, train_pred.mean()).round(6)
         train_predictions[i] = train_pred
-        print(f'Predicted: ${unstandardize(gdp_stats, train_pred)}\tActual: ${unstandardize(gdp_stats, trainy[i])}')
+        train_residuals[i] = train_pred - unstandardize(gdp_stats, trainy[i])
+        print(f'Predicted: ${train_pred}\tActual: ${unstandardize(gdp_stats, trainy[i])}')
 
-    print('Predicting GDP with test data')
-    test_predictions = np.empty(len(testx))
-    for i in range(len(testx)):
-        test_pred = model.predict([testx[i], np.repeat(test_idx[i], testx[i].shape[0])], batch_size=1)[0]
-        test_pred = test_pred.mean().round(6)
-        test_predictions[i] = test_pred
-        print(f'Predicted: ${unstandardize(gdp_stats, test_pred)}\tActual: ${unstandardize(gdp_stats, testy[i])}')
+    print('Predicting GDP with validation data')
+    valid_predictions = np.empty(len(validx))
+    valid_residuals = np.empty(len(validx))
+    for i in range(len(validx)):
+        valid_pred = model.predict([validx[i], np.repeat(
+            valid_idx[i], validx[i].shape[0]), valid_gas[i]], batch_size=1)[0]
+        valid_pred = unstandardize(gdp_stats, valid_pred.mean()).round(6)
+        valid_predictions[i] = valid_pred
+        valid_residuals[i] = valid_pred - unstandardize(gdp_stats, validy[i])
+        print(f'Predicted: ${valid_pred}\tActual: ${unstandardize(gdp_stats, validy[i])}')
 
-    print(f"Test residuals mean {np.mean(test_predictions - testy)}")
-    print(f"Training residuals mean {np.mean(train_predictions - trainy)}")
+    valid_resid_abs_mean = np.abs(valid_residuals).mean()
+    train_resid_abs_mean = np.abs(train_residuals).mean()
+    print(f"Validation set residuals absolute mean {valid_resid_abs_mean}")
+    print(f"Training set residuals absolute mean {train_resid_abs_mean}")
 
     plt.xlabel('Timestep')
-    plt.ylabel('Prediction residual')
-    plt.scatter(test_idx, test_predictions - testy, c='#ef8a62', label='test')
-    plt.scatter(train_idx, train_predictions - trainy, c='#67a9cf', label='train')
+    plt.ylabel('Prediction residual (Billion USD)')
+    plt.scatter(valid_idx, valid_residuals, c='#ef8a62', label='validation')
+    plt.scatter(train_idx, train_residuals, c='#67a9cf', label='train')
     plt.title('Residuals')
     plt.legend()
     plt.show()
     plt.clf()
 
-    hist = pd.DataFrame(history.history)
+    # Plot predictions
+    boundmin = min(train_predictions) - 400
+    boundmax = max(train_predictions) + 400
+    plt.scatter([unstandardize(gdp_stats, trainy[i]) for i in range(len(trainy))], train_predictions)
+    plt.xlabel('True Values (Billion $USD)')
+    plt.ylabel('Predictions (Billion $USD)')
+    plt.title('Predicted vs. True')
+    plt.axis('equal')
+    plt.axis('square')
+    plt.xlim([boundmin, boundmax])
+    plt.ylim([boundmin, boundmax])
+    plt.show()
+    plt.clf()
 
-    best = hist['val_loss'].idxmin()
-
-    return hist.loc[best, ['DecoderOutput_mean_absolute_error', 'val_DecoderOutput_mean_absolute_error',
-                           'GDP_Output_mean_absolute_error', 'val_GDP_Output_mean_absolute_error']]
+    return dec_mae, gdp_mae, train_resid_abs_mean, valid_resid_abs_mean, len(history.history['loss'])
 
 
-def build_model(nhr, nreg, lr, cl1, cf1, cl2, cf2, l1, l2):
+def build_model(nhr, nreg, lr, wg, wd, cl1, cf1, cl2, cf2, l1, l2):
     """
     Build the convolutional neural network.
 
@@ -213,14 +276,14 @@ def build_model(nhr, nreg, lr, cl1, cf1, cl2, cf2, l1, l2):
     # The convolutional layers need input tensors with the shape (batch, steps, channels).
     # A convolutional layer is 1D in that it slides through the data length-wise,
     # moving along just one dimension.
+    pool2_size = 12
 
     # Conv1D parameters: Conv1D(filters, kernel_size, ...)
     conv1 = layers.Conv1D(cf1, cl1, padding='same', activation='relu', name='Convolution1')(input_numeric)
     pool1 = layers.MaxPool1D(name='MaxPool1')(conv1)
     conv2 = layers.Conv1D(cf2, cl2, padding='same', activation='relu', name='Convolution2')(pool1)
-    pool2 = layers.MaxPool1D(12, name='MaxPool2')(conv2)
-    dropo = layers.Dropout(0.5, name='DropHalf')(pool2)
-    feature_layer = layers.Flatten()(dropo)
+    pool2 = layers.MaxPool1D(pool2_size, name='MaxPool2')(conv2)
+    feature_layer = layers.Flatten()(pool2)
 
     # Merge the inputs together and end our encoding with fully connected layers
     encoded = layers.Dense(l1, activation='relu')(feature_layer)
@@ -232,7 +295,7 @@ def build_model(nhr, nreg, lr, cl1, cf1, cl2, cf2, l1, l2):
     x = layers.Dense(cf2 * cl2, activation='relu')(x)
     x = layers.Reshape((cl2, cf2), name='UnFlatten')(x)
     x = layers.Conv1D(filters=cf2, kernel_size=cl2, padding='same', activation='relu')(x)
-    x = layers.UpSampling1D(12)(x)
+    x = layers.UpSampling1D(pool2_size)(x)
     x = layers.Conv1D(filters=cf1, kernel_size=cl1, padding='same', activation='relu')(x)
     x = layers.UpSampling1D()(x)
     decoded = layers.Conv1D(filters=nreg, kernel_size=cl1, padding='same',
@@ -241,16 +304,19 @@ def build_model(nhr, nreg, lr, cl1, cf1, cl2, cf2, l1, l2):
     # Time since start input (for dealing with energy efficiency changes)
     input_time = layers.Input(shape=(1,), name='TimeSinceStart')
 
+    # Natural gas data at a weekly level
+    input_gas = layers.Input(shape=(1,), name='NaturalGas')
+
     # This is our actual output, the GDP prediction
-    merged_layer = layers.Concatenate()([encoded, input_time])
-    output = layers.Dense(8, activation='relu', name='OutputHiddenLayer',)(merged_layer)
+    merged_layer = layers.Concatenate()([encoded, input_time, input_gas])
+    output = layers.Dense(8, activation='relu', name='OutputHiddenLayer')(merged_layer)
     output = layers.Dense(1, activation='linear', name='GDP_Output')(output)
 
-    autoencoder = keras.models.Model([input_numeric, input_time], [output, decoded])
+    autoencoder = keras.models.Model([input_numeric, input_time, input_gas], [output, decoded])
 
     # Specify loss functions and weights for each output
     autoencoder.compile(loss={'GDP_Output': 'mean_squared_error', 'DecoderOutput': 'mean_squared_error'},
-                        loss_weights={'GDP_Output': 0.25, 'DecoderOutput': 0.75},
+                        loss_weights={'GDP_Output': wg, 'DecoderOutput': wd},
                         optimizer=tf.keras.optimizers.RMSprop(lr=lr),
                         metrics=['mean_absolute_error', 'mean_squared_error'])
     return autoencoder
@@ -286,6 +352,14 @@ def get_args():
                         help='The number of units in the first hidden layer (int) [default: 8]',
                         default=8)
 
+    # Loss function weights
+    parser.add_argument('-wgdp', type=float,
+                        help='Weight to apply to the loss of the GDP output [default: 0.5]',
+                        default=0.5)
+    parser.add_argument('-wdec', type=float,
+                        help='Weight to apply to the loss of the decoder output [default: 0.5]',
+                        default=0.5)
+
     # General model parameters
     parser.add_argument('-epochs', type=int, help='The number of epochs to train for', default=1000)
     parser.add_argument('-patience', type=int,
@@ -307,15 +381,15 @@ def main():
 
     # Set up diagnostics
     hyperparams = [k for k in vars(args).keys()]
-    res_metrics = ['decoder_mae', 'dev_decoder_mae', 'GDP_mae', 'dev_GDP_mae']
+    res_metrics = ['decoder_mae', 'GDP_mae', 'train_residuals_abs_mean', 'validation_residuals_abs_mean', 'nepoch']
     diag_headers = hyperparams + res_metrics + ['notes']
     diag_fname = diagnostic_file('gdp_results.csv', diag_headers)
 
-    notes = 'Decoder weight 0.75'
+    notes = ''
 
     # Run model
-    results = run(args.trainx, args.trainy, args.lr, args.CL1, args.CF1, args.CL2, args.CF2, args.L1,
-                  args.L2, args.epochs, args.patience, args.model, plots=True)
+    results = run(args.trainx, args.trainy, args.lr, args.wgdp, args.wdec, args.CL1, args.CF1, args.CL2,
+                  args.CF2, args.L1, args.L2, args.epochs, args.patience, args.model, plots=True)
 
     # Record results
     with open(diag_fname, 'a') as outfile:
