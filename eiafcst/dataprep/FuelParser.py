@@ -1,10 +1,8 @@
 """
-Read the EIA petroleum data from spreadsheets into pandas objects.
-
-Original data from https://www.eia.gov/dnav/pet/pet_cons_wpsup_k_w.htm
+Read the EIA fuel data from spreadsheets into pandas objects.
 
 Caleb Braun
-1/15/19
+5/15/19
 """
 import os
 import pandas as pd
@@ -13,7 +11,28 @@ from pkg_resources import resource_filename
 
 
 class FuelParser:
+    """
+    Read EIA fuel data for use in models.
+
+    Fuel consumption data is publically available on the EIA's website. This
+    class expects any fuel to be used to be downloaded and placed in the
+    package's raw_data directory.
+
+    Currently, support is provided for natural gas and petroleum data, found
+    respectively at:
+        https://www.eia.gov/dnav/ng/ng_cons_sum_dcu_nus_m.htm
+        https://www.eia.gov/dnav/pet/pet_cons_wpsup_k_w.htm
+    Clicking the 'Download Series History' link provides the datasets needed
+    for the GDP model.
+    """
+
     def __init__(self, start_year=1998, end_year=2018):
+        """
+        Initialize a FuelParser.
+
+        :param start_year:  First year of data to parse
+        :param end_year:    Last year of data to parse
+        """
         self.data_dir = resource_filename('eiafcst', 'data/raw_data/')
         self.data_sheet = 'Data 1'
 
@@ -34,10 +53,10 @@ class FuelParser:
         df = df[(df[self.date_col] >= str(self.year1)) & (df[self.date_col] < str(self.year2))]
         df = pd.melt(df, id_vars=self.date_col, var_name=var_name)
 
-        assert all(df[var_name].str.contains(f'{prefix} .* \({unit}\)', regex=True))
+        assert all(df[var_name].str.contains(rf'{prefix} .* \({unit}\)', regex=True))
 
         # The actual product name is after prefix
-        df[var_name] = df[var_name].str.replace(f'.*{prefix} (.*) \({unit}\)', '\\1', regex=True)
+        df[var_name] = df[var_name].str.replace(rf'.*{prefix} (.*) \({unit}\)', '\\1', regex=True)
 
         return df
 
@@ -68,6 +87,11 @@ class FuelParser:
         return df
 
     def parse(self, fuel):
+        """
+        Run the parser for a given fuel.
+
+        :param fuel:    One of 'gas' or 'petrol'
+        """
         if fuel not in ['gas', 'petrol']:
             raise ValueError("Fuel must be one of 'gas' or 'petrol'")
 

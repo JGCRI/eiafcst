@@ -12,15 +12,13 @@ Caleb Braun
 4/25/19
 """
 import matplotlib.pyplot as plt
-import seaborn as sns
-import pandas as pd
 import numpy as np
 import argparse
 import time
 import os
 
 from eiafcst.dataprep import FuelParser
-from eiafcst.dataprep.utils import *
+from eiafcst.dataprep.utils import read_training_data, plot_history, diagnostic_file, add_quarter_and_week
 from eiafcst.dataprep.economic import parse_gdp
 
 import tensorflow as tf
@@ -28,10 +26,9 @@ from tensorflow import keras
 from tensorflow.keras import layers
 from tensorflow.keras.utils import plot_model
 
-from pkg_resources import resource_filename
-
 
 def unstandardize(gdp_stats, val):
+    """Convert standardized GDP to dollar values."""
     return round(val * gdp_stats['std'] + gdp_stats['mean'], 2)
 
 
