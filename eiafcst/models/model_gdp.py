@@ -32,9 +32,9 @@ def unstandardize(gdp_stats, val):
     return round(val * gdp_stats['std'] + gdp_stats['mean'], 2)
 
 
-def load_natural_gas(fp, years):
+def load_fuel(fp, fuel_type, years, train_idx, valid_idx, test_idx):
     """
-    Prepare the natural gas data as as input to the GDP model.
+    Prepare fuel data as input to the GDP model.
 
     Filters out categories like residential consumption and electric power, as
     those categories are presumably just repeating information provided by the
@@ -43,23 +43,32 @@ def load_natural_gas(fp, years):
     :param fp:      FuelParser object
     :param years:   Sequence of years to filter gas data to
     """
-    gas = fp.parse('gas')
+    fuel = fp.parse(fuel_type)
 
-    # Filter to correct years and best GDP categories.
-    gas_gdp_categories = ['Industrial Consumption', 'Lease and Plant Fuel Consumption', 'Pipeline & Distrubtion Use']
-    gas = gas[gas['EconYear'].isin(years)]
-    gas = gas[gas['end_use'].isin(gas_gdp_categories)]
+    fuel = fuel[fuel['EconYear'].isin(years)]
+
+    val_col = fuel.columns[-1]
+    var_col = fuel.columns[-2]
+
+    # Filter to best GDP categories for natural gas
+    if fuel_type == 'gas':
+        gdp_categories = ['Industrial Consumption', 'Lease and Plant Fuel Consumption', 'Pipeline & Distrubtion Use']
+        fuel = fuel[fuel[var_col].isin(gdp_categories)]
 
     # Aggregate categories to weekly total
-    gas = gas.groupby(['EconYear', 'quarter', 'week'], as_index=False).agg({'MMcf': 'sum'})
+    fuel = fuel.groupby(['EconYear', 'quarter', 'week'], as_index=False).agg({val_col: 'sum'})
 
     # Standardize
-    gas['MMcf'] = (gas['MMcf'] - gas['MMcf'].mean()) / gas['MMcf'].std()
+    fuel[val_col] = (fuel[val_col] - fuel[val_col].mean()) / fuel[val_col].std()
 
     # Add case (quarter) number
-    gas['case'] = (gas['EconYear'] - gas['EconYear'].min()) * 4 + gas['quarter'] - 1
+    fuel['case'] = (fuel['EconYear'] - fuel['EconYear'].min()) * 4 + fuel['quarter'] - 1
 
-    return gas
+    train = [fuel.loc[fuel['case'] == i, val_col].values for i in train_idx]
+    valid = [fuel.loc[fuel['case'] == i, val_col].values for i in valid_idx]
+    test = [fuel.loc[fuel['case'] == i, val_col].values for i in test_idx]
+
+    return train, valid, test
 
 
 def prep_data(xpth, ypth=None, train_frac=0.8):
@@ -130,19 +139,19 @@ def run(trainx, trainy, lr, wg, wd, cl1, cf1, cl2, cf2, l1, l2, epochs, patience
 
     trainx = values[train_idx]
     validx = values[valid_idx]
-    testx = values[test_idx]
+    # testx = values[test_idx]
     trainy = labels.gdp.values[train_idx]
     validy = labels.gdp.values[valid_idx]
-    testy = labels.gdp.values[test_idx]
+    # testy = labels.gdp.values[test_idx]
     train_timesteps = train_idx
     valid_timesteps = valid_idx
 
-    # Separate the natural gas data into cases matching the gdp and electricity inputs
+    # Separate the natural gas and petroleum data into cases matching the gdp
+    # and electricity inputs.
     fp = FuelParser.FuelParser()
-    gas = load_natural_gas(fp, labels['EconYear'])
-    train_gas = [gas.loc[gas['case'] == i, 'MMcf'].values for i in train_idx]
-    valid_gas = [gas.loc[gas['case'] == i, 'MMcf'].values for i in valid_idx]
-    test_gas = [gas.loc[gas['case'] == i, 'MMcf'].values for i in test_idx]
+    yrs = labels['EconYear'].unique()
+    train_gas, valid_gas, test_gas = load_fuel(fp, 'gas', yrs, train_idx, valid_idx, test_idx)
+    train_petrol, valid_petrol, test_petrol = load_fuel(fp, 'petrol', yrs, train_idx, valid_idx, test_idx)
 
     model = build_model(nhrweek, nregion, lr, wg, wd, cl1, cf1, cl2, cf2, l1, l2)
 
@@ -158,26 +167,28 @@ def run(trainx, trainy, lr, wg, wd, cl1, cf1, cl2, cf2, l1, l2, epochs, patience
     # generator where each batch is one case, so the input array has a fixed
     # number of weeks (although this number is variable in each batch) and can
     # be represented in a 3d numpy array.
-    def batch_generator(ele_residuals, timestep, gas_residuals, labels):
+    def batch_generator(ele_residuals, timestep, gas_residuals, pet_residuals, labels):
         i = 0
         while True:
             # print(f'Input length: {len(elec_residuals)}\tBATCH #{i % len(elec_residuals)}')
             ele = ele_residuals[i % len(ele_residuals)]
             gas = gas_residuals[i % len(ele_residuals)]
+            pet = pet_residuals[i % len(ele_residuals)]
             ts = np.repeat(timestep[i % len(ele_residuals)], ele.shape[0])
             labs = np.repeat(labels[i % len(ele_residuals)], ele.shape[0])
-            yield ([ele, ts, gas], [labs, ele])
+            yield ([ele, ts, gas, pet], [labs, ele])
             i += 1
 
     # The patience parameter is the amount of epochs to check for improvement
     early_stop = keras.callbacks.EarlyStopping(monitor='val_loss', patience=patience, restore_best_weights=True)
 
-    history = model.fit_generator(generator=batch_generator(trainx, train_timesteps, train_gas, trainy),
+    history = model.fit_generator(generator=batch_generator(trainx, train_timesteps, train_gas, train_petrol, trainy),
                                   steps_per_epoch=len(trainx),
                                   epochs=epochs,
                                   verbose=0,
                                   callbacks=[early_stop],
-                                  validation_data=batch_generator(validx, valid_timesteps, valid_gas, validy),
+                                  validation_data=batch_generator(
+                                      validx, valid_timesteps, valid_gas, valid_petrol, validy),
                                   validation_steps=len(validx))
 
     plot_history(history,
@@ -187,7 +198,7 @@ def run(trainx, trainy, lr, wg, wd, cl1, cf1, cl2, cf2, l1, l2, epochs, patience
                  savefile='gdp_train_history.png')
 
     # Evaluate the model on our validation set
-    metrics = model.evaluate_generator(generator=batch_generator(validx, valid_timesteps, valid_gas, validy),
+    metrics = model.evaluate_generator(generator=batch_generator(validx, valid_timesteps, valid_gas, valid_petrol, validy),
                                        steps=len(validx))
 
     gdp_mae = metrics[3]
@@ -197,8 +208,8 @@ def run(trainx, trainy, lr, wg, wd, cl1, cf1, cl2, cf2, l1, l2, epochs, patience
     train_residuals = np.empty(len(trainx))
     print('Predicting GDP with training data')
     for i in range(len(trainx)):
-        train_pred = model.predict([trainx[i], np.repeat(
-            train_timesteps[i], trainx[i].shape[0]), train_gas[i]], batch_size=1)[0]
+        train_pred = model.predict([trainx[i], np.repeat(train_timesteps[i], trainx[i].shape[0]),
+                                    train_gas[i], train_petrol[i]], batch_size=1)[0]
         train_pred = unstandardize(gdp_stats, train_pred.mean()).round(6)
         train_predictions[i] = train_pred
         train_residuals[i] = train_pred - unstandardize(gdp_stats, trainy[i])
@@ -208,8 +219,8 @@ def run(trainx, trainy, lr, wg, wd, cl1, cf1, cl2, cf2, l1, l2, epochs, patience
     valid_predictions = np.empty(len(validx))
     valid_residuals = np.empty(len(validx))
     for i in range(len(validx)):
-        valid_pred = model.predict([validx[i], np.repeat(
-            valid_idx[i], validx[i].shape[0]), valid_gas[i]], batch_size=1)[0]
+        valid_pred = model.predict([validx[i], np.repeat(valid_idx[i], validx[i].shape[0]),
+                                    valid_gas[i], valid_petrol[i]], batch_size=1)[0]
         valid_pred = unstandardize(gdp_stats, valid_pred.mean()).round(6)
         valid_predictions[i] = valid_pred
         valid_residuals[i] = valid_pred - unstandardize(gdp_stats, validy[i])
@@ -304,12 +315,15 @@ def build_model(nhr, nreg, lr, wg, wd, cl1, cf1, cl2, cf2, l1, l2):
     # Natural gas data at a weekly level
     input_gas = layers.Input(shape=(1,), name='NaturalGas')
 
+    # Petroleum data at a weekly level
+    input_petrol = layers.Input(shape=(1,), name='Petroleum')
+
     # This is our actual output, the GDP prediction
-    merged_layer = layers.Concatenate()([encoded, input_time, input_gas])
-    output = layers.Dense(8, activation='relu', name='OutputHiddenLayer')(merged_layer)
+    merged_layer = layers.Concatenate()([encoded, input_time, input_gas, input_petrol])
+    output = layers.Dense(16, activation='relu', name='OutputHiddenLayer')(merged_layer)
     output = layers.Dense(1, activation='linear', name='GDP_Output')(output)
 
-    autoencoder = keras.models.Model([input_numeric, input_time, input_gas], [output, decoded])
+    autoencoder = keras.models.Model([input_numeric, input_time, input_gas, input_petrol], [output, decoded])
 
     # Specify loss functions and weights for each output
     autoencoder.compile(loss={'GDP_Output': 'mean_squared_error', 'DecoderOutput': 'mean_squared_error'},
