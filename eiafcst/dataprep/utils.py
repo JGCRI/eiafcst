@@ -145,34 +145,54 @@ def read_training_data(f, prec='float32'):
     return dataset
 
 
-def diagnostic_file(fname, columns):
+class DiagnosticFile:
     """
-    Construct a .csv file for recording diagnostic results of a model training.
+    A file for model diagnostics.
 
-    Checks if a diagnostic file exists, and creates one if not.
+    This class provides an interface to a .csv file that records the diagnostic
+    results of training a model with varying parameters.
 
-    :param fname:       the name of the diagnostic file.
-    :param columns:     list of attributes that will be recorded
+    The file has three main groups of columns:
+      1. The set of hyperparameters, including the paths to the training data.
+      2. The metrics returned by the model training
+      3. A column for any additional notes
     """
-    diag_dir = resource_filename('eiafcst', path.join('models', 'diagnostic'))
-    res_fname = path.join(diag_dir, fname)
 
-    columns[-1] += '\n'
+    def __init__(self, fname, hyperparams, res_metrics):
+        """
+        Construct a .csv file for recording diagnostic results of a model training.
 
-    if not path.exists(res_fname):
-        with open(res_fname, 'w') as results_file:
-            results_file.write(','.join(columns))
-    else:
-        with open(res_fname, 'r') as results_file:
-            header = results_file.readline().split(',')
-            missing = [c for c in columns if c not in header]
-            if missing:
-                print(f'{res_fname} is missing columns')
-                print(f'Required columns: {columns}')
+        Checks if a diagnostic file exists, and creates one if not.
 
-            assert columns == header
+        :param fname:          the name of the diagnostic file.
+        :param hyperparams:    list of hyperparameters that will be recorded
+        :param res_metrics:    list of result metrics that will be recorded
+        """
+        diag_dir = resource_filename('eiafcst', path.join('models', 'diagnostic'))
+        self.fname = path.join(diag_dir, fname)
+        self.columns = hyperparams + res_metrics + ['notes']
 
-    return res_fname
+        try:
+            results_file = pd.read_csv(self.fname)
+            if not all(results_file.columns == self.columns):
+                raise ValueError(f'{fname} has columns\n{list(results_file.columns)}\nnot\n{self.columns}')
+        except FileNotFoundError:
+            results_file = pd.DataFrame(columns=self.columns)
+            results_file.to_csv(self.fname, index=False)
+
+    def write(self, hyper_values, results, notes):
+        """
+        Write the results of a model training.
+
+        :param hyper_values:    the training run's hyperparameter values
+        :param results:         the training run's diagnostic metrics
+        :param notes:           any notes to be added to final column
+        """
+        diag_values = hyper_values + list(results) + [notes]
+
+        results_file = pd.read_csv(self.fname)
+        results_file.loc[results_file.index.max() + 1] = diag_values
+        results_file.to_csv(self.fname, index=False, float_format='%.4f')
 
 
 def combine_elec_and_temperature(elec, temp):
@@ -180,7 +200,7 @@ def combine_elec_and_temperature(elec, temp):
     Prepare the dataset for modelling electric load from temperature.
 
     Prerequisits are data created from
-        python eiafcst/main.py -e -fillfile eiafcst/data/random-forest-fill-values.csv ./
+        python eiafcst/main.py - e - fillfile eiafcst/data/random-forest-fill-values.csv ./
     and
         python eiafcst/dataprep/temperature.py temperature_by_agg_region.csv eiafcst/data/spatial/Aggregate_Regions/Aggregate_Regions.shp
     """

@@ -18,7 +18,7 @@ import time
 import os
 
 from eiafcst.dataprep import FuelParser
-from eiafcst.dataprep.utils import read_training_data, plot_history, diagnostic_file, add_quarter_and_week
+from eiafcst.dataprep.utils import read_training_data, plot_history, DiagnosticFile, add_quarter_and_week
 from eiafcst.dataprep.economic import parse_gdp
 
 import tensorflow as tf
@@ -110,7 +110,7 @@ def prep_data(xpth, ypth=None, train_frac=0.8):
     return elec_lst, gdp, gdp_stats
 
 
-def run(trainx, trainy, lr, wg, wd, cl1, cf1, cl2, cf2, l1, l2, epochs, patience, model, plots=True):
+def run(trainx, trainy, lr, wg, wd, conv_layers, l1, l2, epochs, patience, model, plots=True):
     """
     Run the model.
 
@@ -153,7 +153,7 @@ def run(trainx, trainy, lr, wg, wd, cl1, cf1, cl2, cf2, l1, l2, epochs, patience
     train_gas, valid_gas, test_gas = load_fuel(fp, 'gas', yrs, train_idx, valid_idx, test_idx)
     train_petrol, valid_petrol, test_petrol = load_fuel(fp, 'petrol', yrs, train_idx, valid_idx, test_idx)
 
-    model = build_model(nhrweek, nregion, lr, wg, wd, cl1, cf1, cl2, cf2, l1, l2)
+    model = build_model(nhrweek, nregion, lr, wg, wd, conv_layers, l1, l2)
 
     model.summary()
 
@@ -257,7 +257,28 @@ def run(trainx, trainy, lr, wg, wd, cl1, cf1, cl2, cf2, l1, l2, epochs, patience
     return dec_mae, gdp_mae, train_resid_abs_mean, valid_resid_abs_mean, len(history.history['loss'])
 
 
-def build_model(nhr, nreg, lr, wg, wd, cl1, cf1, cl2, cf2, l1, l2):
+def parse_conv_layers(conv_layers):
+    """
+    Parse convolutional layers argument.
+
+    Returns tuple (filters, kernel_size, pool_size) for each layer.
+    """
+    conv_params = []
+    for layer in conv_layers.split(','):
+        params = [int(p) for p in layer.split('-')]
+        if len(params) < 2:
+            raise ValueError('-C must be [filters]-[kernel_size]-[pool_size (optional)],[filters]-...')
+        elif len(params) == 2:
+            params.append(2)
+            conv_params.append(tuple(params))
+        else:
+            conv_params.append(tuple(params[:3]))
+
+    assert conv_params  # Make sure at least one was added
+    return conv_params
+
+
+def build_model(nhr, nreg, lr, wg, wd, conv_layers, l1, l2):
     """
     Build the convolutional neural network.
 
@@ -284,14 +305,23 @@ def build_model(nhr, nreg, lr, wg, wd, cl1, cf1, cl2, cf2, l1, l2):
     # The convolutional layers need input tensors with the shape (batch, steps, channels).
     # A convolutional layer is 1D in that it slides through the data length-wise,
     # moving along just one dimension.
-    pool2_size = 12
+    # Parameters for the convolutional layers are given as a comma-separated argument:
+    #
+    #     [filters]-[kernel_size]-[pool_size (optional)],[filters]-...
+    #
+    # These are fed directly into the Conv1D layer, which has parameters:
+    #     Conv1D(filters, kernel_size, ...)
+    conv_params = parse_conv_layers(conv_layers)
+    last_conv_filters, last_conv_length = conv_params[1][:2]
 
-    # Conv1D parameters: Conv1D(filters, kernel_size, ...)
-    conv1 = layers.Conv1D(cf1, cl1, padding='same', activation='relu', name='Convolution1')(input_numeric)
-    pool1 = layers.MaxPool1D(name='MaxPool1')(conv1)
-    conv2 = layers.Conv1D(cf2, cl2, padding='same', activation='relu', name='Convolution2')(pool1)
-    pool2 = layers.MaxPool1D(pool2_size, name='MaxPool2')(conv2)
-    feature_layer = layers.Flatten()(pool2)
+    convolutions = layers.Conv1D(conv_params[0][1], conv_params[0][0], padding='same', activation='relu')(input_numeric)
+    convolutions = layers.MaxPool1D(conv_params[0][2])(convolutions)
+
+    for param_set in conv_params[1:]:
+        convolutions = layers.Conv1D(param_set[1], param_set[0], padding='same', activation='relu')(convolutions)
+        convolutions = layers.MaxPool1D(param_set[2])(convolutions)
+
+    feature_layer = layers.Flatten()(convolutions)
 
     # Merge the inputs together and end our encoding with fully connected layers
     encoded = layers.Dense(l1, activation='relu')(feature_layer)
@@ -299,15 +329,16 @@ def build_model(nhr, nreg, lr, wg, wd, cl1, cf1, cl2, cf2, l1, l2):
 
     # At this point, the representation is the most encoded and small
     # Now let's build the decoder
-    x = layers.Dense(l1, activation='relu')(encoded)
-    x = layers.Dense(cf2 * cl2, activation='relu')(x)
-    x = layers.Reshape((cl2, cf2), name='UnFlatten')(x)
-    x = layers.Conv1D(filters=cf2, kernel_size=cl2, padding='same', activation='relu')(x)
-    x = layers.UpSampling1D(pool2_size)(x)
-    x = layers.Conv1D(filters=cf1, kernel_size=cl1, padding='same', activation='relu')(x)
-    x = layers.UpSampling1D()(x)
-    decoded = layers.Conv1D(filters=nreg, kernel_size=cl1, padding='same',
-                            activation='relu', name='DecoderOutput')(x)
+    decoded = layers.Dense(l1, activation='relu')(encoded)
+    decoded = layers.Dense(last_conv_filters * last_conv_length, activation='relu')(decoded)
+
+    decoded = layers.Reshape((last_conv_filters, last_conv_length), name='UnFlatten')(decoded)
+
+    for param_set in reversed(conv_params):
+        decoded = layers.Conv1D(param_set[1], param_set[0], padding='same', activation='relu')(decoded)
+        decoded = layers.UpSampling1D(param_set[2])(decoded)
+
+    decoded = layers.Conv1D(nreg, conv_params[0][0], padding='same', activation='relu', name='DecoderOutput')(decoded)
 
     # Time since start input (for dealing with energy efficiency changes)
     input_time = layers.Input(shape=(1,), name='TimeSinceStart')
@@ -342,18 +373,9 @@ def get_args():
     parser.add_argument('-lr', type=float, help='The learning rate (a float)', default=0.01)
 
     # CNN parameters
-    parser.add_argument('-CL1', type=int,
-                        help='The length of the first convolutional layer\'s kernel (int) [default: 8]',
-                        default=8)
-    parser.add_argument('-CF1', type=int,
-                        help='The number of filters (channels) in the first convolutional layer (int) [default: 20]',
-                        default=20)
-    parser.add_argument('-CL2', type=int,
-                        help='The number of units in the second convolutional layer\'s kernel (int) [default: 7]',
-                        default=7)
-    parser.add_argument('-CF2', type=int,
-                        help='The number of filters (channels) in the second convolutional layer (int) [default: 3]',
-                        default=3)
+    parser.add_argument('-C', type=str,
+                        help='Comma-separated list defining convolutional layers (kernel-length:#filters) [default: "8-20,7-3-12"]',
+                        default="8-20,7-3-12")
 
     # Hidden layers parameters
     parser.add_argument('-L1', type=int,
@@ -393,21 +415,17 @@ def main():
     # Set up diagnostics
     hyperparams = [k for k in vars(args).keys()]
     res_metrics = ['decoder_mae', 'GDP_mae', 'train_residuals_abs_mean', 'validation_residuals_abs_mean', 'nepoch']
-    diag_headers = hyperparams + res_metrics + ['notes']
-    diag_fname = diagnostic_file('gdp_results.csv', diag_headers)
+    diag_file = DiagnosticFile('gdp_results.csv', hyperparams, res_metrics)
 
     notes = ''
 
     # Run model
-    results = run(args.trainx, args.trainy, args.lr, args.wgdp, args.wdec, args.CL1, args.CF1, args.CL2,
-                  args.CF2, args.L1, args.L2, args.epochs, args.patience, args.model, plots=True)
+    results = run(args.trainx, args.trainy, args.lr, args.wgdp, args.wdec, args.C,
+                  args.L1, args.L2, args.epochs, args.patience, args.model, plots=True)
 
     # Record results
-    with open(diag_fname, 'a') as outfile:
-        hyper_values = [str(v) for k, v in vars(args).items()]
-        diag_results = [str(round(r, 4)) for r in results]
-        diag_values = ','.join(hyper_values + diag_results + [notes + '\n'])
-        outfile.write(diag_values)
+    hyper_values = [str(v) for k, v in vars(args).items()]
+    diag_file.write(hyper_values, results, notes)
 
     print(f'Done in {time.time() - st} seconds.')
 
