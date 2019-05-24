@@ -110,7 +110,7 @@ def prep_data(xpth, ypth=None, train_frac=0.8):
     return elec_lst, gdp, gdp_stats
 
 
-def run(trainx, trainy, lr, wg, wd, conv_layers, l1, l2, epochs, patience, model, plots=True):
+def run(trainx, trainy, lr, wg, wd, conv_layers, l1, l2, lgdp, epochs, patience, model, plots=True):
     """
     Run the model.
 
@@ -153,7 +153,7 @@ def run(trainx, trainy, lr, wg, wd, conv_layers, l1, l2, epochs, patience, model
     train_gas, valid_gas, test_gas = load_fuel(fp, 'gas', yrs, train_idx, valid_idx, test_idx)
     train_petrol, valid_petrol, test_petrol = load_fuel(fp, 'petrol', yrs, train_idx, valid_idx, test_idx)
 
-    model = build_model(nhrweek, nregion, lr, wg, wd, conv_layers, l1, l2)
+    model = build_model(nhrweek, nregion, lr, wg, wd, conv_layers, l1, l2, lgdp)
 
     model.summary()
 
@@ -278,7 +278,7 @@ def parse_conv_layers(conv_layers):
     return conv_params
 
 
-def build_model(nhr, nreg, lr, wg, wd, conv_layers, l1, l2):
+def build_model(nhr, nreg, lr, wg, wd, conv_layers, l1, l2, lgdp):
     """
     Build the convolutional neural network.
 
@@ -351,7 +351,7 @@ def build_model(nhr, nreg, lr, wg, wd, conv_layers, l1, l2):
 
     # This is our actual output, the GDP prediction
     merged_layer = layers.Concatenate()([encoded, input_time, input_gas, input_petrol])
-    output = layers.Dense(16, activation='relu', name='OutputHiddenLayer')(merged_layer)
+    output = layers.Dense(lgdp, activation='relu', name='OutputHiddenLayer')(merged_layer)
     output = layers.Dense(1, activation='linear', name='GDP_Output')(output)
 
     autoencoder = keras.models.Model([input_numeric, input_time, input_gas, input_petrol], [output, decoded])
@@ -373,17 +373,16 @@ def get_args():
     parser.add_argument('-lr', type=float, help='The learning rate (a float)', default=0.01)
 
     # CNN parameters
-    parser.add_argument('-C', type=str,
-                        help='Comma-separated list defining convolutional layers (kernel-length:#filters) [default: "8-20,7-3-12"]',
-                        default="8-20,7-3-12")
+    cnn_help = 'Comma-separated list defining convolutional layers (kernel_length-filters) [default: "8-20,7-3-12"]'
+    parser.add_argument('-C', type=str, help=cnn_help, default="8-20,7-3-12")
 
     # Hidden layers parameters
-    parser.add_argument('-L1', type=int,
-                        help='The number of units in the first hidden layer (int) [default: 16]',
-                        default=16)
-    parser.add_argument('-L2', type=int,
-                        help='The number of units in the first hidden layer (int) [default: 8]',
-                        default=8)
+    hl1_help = 'The number of units in the first hidden layer (int) [default: 16]'
+    hl2_help = 'The number of units in the final encoding (int) [default: 8]'
+    hlg_help = 'The number of units in the hidden layer of the GDP branch (int) [default: 16]'
+    parser.add_argument('-L1', type=int, help=hl1_help, default=16)
+    parser.add_argument('-L2', type=int, help=hl2_help, default=8)
+    parser.add_argument('-lgdp', type=int, help=hlg_help, default=16)
 
     # Loss function weights
     parser.add_argument('-wgdp', type=float,
@@ -394,13 +393,13 @@ def get_args():
                         default=0.5)
 
     # General model parameters
-    parser.add_argument('-epochs', type=int, help='The number of epochs to train for', default=1000)
+    parser.add_argument('-epochs', type=int, help='The number of epochs to train for', default=5000)
     parser.add_argument('-patience', type=int,
-                        help='How many epochs to continue training without improving dev accuracy (int) [default: 20]',
-                        default=20)
+                        help='How many epochs to continue training without improving dev accuracy (int) [default: 50]',
+                        default=50)
     parser.add_argument('-model', type=str,
-                        help='Save the best model with this prefix (string) [default: /training_1/model.ckpt]',
-                        default=os.path.normpath('/training_1/model.ckpt'))
+                        help='Save the best model with this prefix, ignored if empty (string)',
+                        default='')
 
     return parser.parse_args()
 
@@ -420,8 +419,8 @@ def main():
     notes = ''
 
     # Run model
-    results = run(args.trainx, args.trainy, args.lr, args.wgdp, args.wdec, args.C,
-                  args.L1, args.L2, args.epochs, args.patience, args.model, plots=True)
+    results = run(args.trainx, args.trainy, args.lr, args.wgdp, args.wdec, args.C, args.L1,
+                  args.L2, args.lgdp, args.epochs, args.patience, args.model, plots=True)
 
     # Record results
     hyper_values = [str(v) for k, v in vars(args).items()]

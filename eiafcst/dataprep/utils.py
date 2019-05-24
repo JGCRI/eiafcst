@@ -174,7 +174,7 @@ class DiagnosticFile:
 
         try:
             results_file = pd.read_csv(self.fname)
-            if not all(results_file.columns == self.columns):
+            if len(results_file.columns) != len(self.columns) or not all(results_file.columns == self.columns):
                 raise ValueError(f'{fname} has columns\n{list(results_file.columns)}\nnot\n{self.columns}')
         except FileNotFoundError:
             results_file = pd.DataFrame(columns=self.columns)
