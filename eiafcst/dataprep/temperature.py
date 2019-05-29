@@ -1,6 +1,4 @@
 """
-temperature.py
-
 Produce weekly national temperature averages weighted by population.
 
 The directory containing input temperatures must follow the naming
@@ -41,7 +39,8 @@ def transform_from_latlon(lat, lon):
 
 def rasterize(shapes, coords, latitude='latitude', longitude='longitude',
               fill=np.nan, **kwargs):
-    """Rasterize a list of (geometry, fill_value) tuples onto the given
+    """
+    Rasterize a list of (geometry, fill_value) tuples onto the given
     xarray coordinates. This only works for 1d latitude and longitude
     arrays.
 
@@ -87,7 +86,7 @@ def rasterize(shapes, coords, latitude='latitude', longitude='longitude',
 def add_shape_coord_from_data_array(xr_da, shp_path, coord_name):
     """
     Create a new coord for the xr_da indicating whether or not it
-    is inside the shapefile
+    is inside the shapefile.
 
     Creates a new coord - "coord_name" which will have integer values
     used to subset xr_da for plotting / analysis/
@@ -160,7 +159,7 @@ def read_global_pop(ncfile):
 
 def average_da(self, dim=None, weights=None):
     """
-    weighted average for DataArrays
+    Weighted average for DataArrays.
 
     Source:
         https://github.com/pydata/xarray/issues/422#issuecomment-140823232
@@ -177,6 +176,7 @@ def average_da(self, dim=None, weights=None):
     reduced : DataArray
         New DataArray with average applied to its data and the indicated
         dimension(s) removed.
+
     """
     if weights is None:
         return self.mean(dim)

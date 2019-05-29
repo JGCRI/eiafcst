@@ -1,12 +1,12 @@
 """
 Convolutional neural net with auto encoder for predicting GDP from energy use.
 
-Iteration 1
+Iteration 2
 -----------
-For our first attempt, we are strictly using the residuals from the
-temperature -> electricity model. The goal is to predict quarterly GDP values
-from the electricity residuals, using a convolutional neural network with an
-auto-encoder.
+For our second attempt, we are using the residuals from the temperature
+and electricity model, as well as natural gas and petroleum inputs. The goal
+is to predict quarterly GDP values from these inputs, using a convolutional
+neural network with an auto-encoder.
 
 Caleb Braun
 4/25/19
@@ -15,7 +15,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import argparse
 import time
-import os
 
 from eiafcst.dataprep import FuelParser
 from eiafcst.dataprep.utils import read_training_data, plot_history, DiagnosticFile, add_quarter_and_week
@@ -112,9 +111,16 @@ def prep_data(xpth, ypth=None, train_frac=0.8):
 
 def run(trainx, trainy, lr, wg, wd, conv_layers, l1, l2, lgdp, epochs, patience, model, plots=True):
     """
-    Run the model.
+    Run the deep learning model.
 
-    Does some cool stuff.
+    Trains and evaluates the model. Assumes all inputs have been verified at
+    this point.
+
+    :param train:       Dictionary of all training datasets for all inputs and outputs.
+    :param dev:         Dictionary of all validation datasets for all inputs and outputs.
+    :param hpars:       Dictionary of all hyperparameters.
+    :param model:       Location to store best model; if empty, does not save.
+    :param plots:       Boolean; generate plots of model performance? [default: True]
     """
     # trainx = '/Users/brau074/Documents/EIA/eiafcst/eiafcst/models/electricity/elec_model5_residuals.csv'
 
@@ -405,7 +411,27 @@ def get_args():
 
 
 def main():
-    """Get hyperparams, load and standardize data, train and evaluate."""
+    """
+    Get hyperparams, load and standardize data, train and evaluate.
+
+    To see the model structure, see gdp_model.png.
+
+    Given the general model structure, there are many parameters that can be
+    adjusted for a given training. These hyperparameters can be tuned for best
+    performance:
+
+    trainx - File path to training dataset values
+    trainy - File path to training dataset labels
+    lr - Optimization algorithm's learning rate
+    C - Convolutional layers
+    L1 - Hidden layer after convolutional layers
+    L2 - Final encoded layer, represents features from electricity dataset
+    lgdp - Hidden layer in GDP branch
+    wgdp - Weight given to GDP output
+    wdec - Weight given to decoder output
+    epochs - Number of epochs before stopping
+    patience - Number of epochs to stop after if no better result is found
+    """
     st = time.time()
 
     # Hyperparameters passed in via command line

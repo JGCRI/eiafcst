@@ -92,6 +92,7 @@ def fill_simulated(df, new_df):
 
 
 def remove_incomplete_weeks(df, datecol, aggcols):
+    """Remove rows from hourly DataFrame that do not make up a complete week."""
     HR_IN_WK = 168
     return df.groupby(aggcols + ['EconYear', 'quarter', 'week']).filter(lambda x: len(x) == HR_IN_WK)
 

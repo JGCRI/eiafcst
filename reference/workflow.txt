@@ -7,9 +7,9 @@ To replicate the modeling process, follow these steps:
     python eiafcst/data/spatial/build_shapefile.py  
 
 2. Generate first round of electricity data:
-    python eiafcst/main.py -e ./
+    python eiafcst/main.py -e eiafcst/output
 
-3. Use output load_by_sub_region_2006-2017.csv for random forest modelling of
+3. Use output load_by_sub_region_2006-2017.csv for random forest modeling of
    missing values
 
 4. Generate final electricity data set:
@@ -18,3 +18,7 @@ To replicate the modeling process, follow these steps:
 
 5. Aggregate gridded temperature data into regional hourly totals:
     python eiafcst/dataprep/temperature.py temperature_by_agg_region.csv eiafcst/data/spatial/Aggregate_Regions/Aggregate_Regions.shp
+
+6. Run the electricity model
+
+7. Use the electricity residuals as inputs to the GDP model
