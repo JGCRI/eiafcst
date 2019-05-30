@@ -125,40 +125,22 @@ def train_model(train, dev, hpars, model, plots=True):
     gdp_mae = metrics[3]
     dec_mae = metrics[5]
 
-    train_predictions = np.empty(len(train['elec']))
-    train_residuals = np.empty(len(train['elec']))
-    print('Predicting GDP with training data')
-    for i in range(len(train['elec'])):
-        train_pred = model.predict([train['elec'][i], np.repeat(train['time'][i], train['elec'][i].shape[0]),
-                                    train['gas'][i], train['petrol'][i]], batch_size=1)[0]
-        train_pred = unstandardize(train['gdp'], train_pred.mean()).round(6)
-        train_predictions[i] = train_pred
-        train_residuals[i] = train_pred - unstandardize(train['gdp'], train_labels[i])
-        print(f'Predicted: ${train_pred}\tActual: ${unstandardize(train["gdp"], train_labels[i])}')
+    train_predictions, train_residuals = run_prediction(model, train, 'training', train_labels)
+    dev_predictions, dev_residuals = run_prediction(model, dev, 'development', dev_labels)
 
-    print('Predicting GDP with validation data')
-    valid_predictions = np.empty(len(dev['elec']))
-    valid_residuals = np.empty(len(dev['elec']))
-    for i in range(len(dev['elec'])):
-        valid_pred = model.predict([dev['elec'][i], np.repeat(dev['time'][i], dev['elec'][i].shape[0]),
-                                    dev['gas'][i], dev['petrol'][i]], batch_size=1)[0]
-        valid_pred = unstandardize(dev['gdp'], valid_pred.mean()).round(6)
-        valid_predictions[i] = valid_pred
-        valid_residuals[i] = valid_pred - unstandardize(dev['gdp'], dev_labels[i])
-        print(f'Predicted: ${valid_pred}\tActual: ${unstandardize(dev["gdp"], dev_labels[i])}')
-
-    valid_resid_abs_mean = np.abs(valid_residuals).mean()
+    dev_resid_abs_mean = np.abs(dev_residuals).mean()
     train_resid_abs_mean = np.abs(train_residuals).mean()
-    print(f"Validation set residuals absolute mean {valid_resid_abs_mean}")
+    print(f"Validation set residuals absolute mean {dev_resid_abs_mean}")
     print(f"Training set residuals absolute mean {train_resid_abs_mean}")
 
+    # Plot residuals
     plt.xlabel('Timestep')
     plt.ylabel('Prediction residual (Billion USD)')
-    plt.scatter(dev['time'], valid_residuals, c='#ef8a62', label='validation')
+    plt.scatter(dev['time'], dev_residuals, c='#ef8a62', label='development')
     plt.scatter(train['time'], train_residuals, c='#67a9cf', label='train')
     plt.title('Residuals')
     plt.legend()
-    plt.show()
+    plt.savefig('gdp_residuals.png')
     plt.clf()
 
     # Plot predictions
@@ -172,10 +154,10 @@ def train_model(train, dev, hpars, model, plots=True):
     plt.axis('square')
     plt.xlim([boundmin, boundmax])
     plt.ylim([boundmin, boundmax])
-    plt.show()
+    plt.savefig('gdp_predicted_v_true.png')
     plt.clf()
 
-    return dec_mae, gdp_mae, train_resid_abs_mean, valid_resid_abs_mean, len(history.history['loss'])
+    return dec_mae, gdp_mae, train_resid_abs_mean, dev_resid_abs_mean, len(history.history['loss'])
 
 
 def parse_conv_layers(conv_layers):
@@ -285,12 +267,30 @@ def build_model(nhr, nreg, lr, wg, wd, conv_layers, l1, l2, lgdp):
     return autoencoder
 
 
+def run_prediction(model, dset, dset_name, labs):
+    """
+    Get predictions from the model with known results.
+
+    Returns the predictions and the residuals (predicted - actual).
+    """
+    predictions = np.empty(len(dset['elec']))
+    residuals = np.empty(len(dset['elec']))
+    print(f'Predicting GDP with {dset_name} data')
+    for i in range(len(dset['elec'])):
+        pred = model.predict([dset['elec'][i], np.repeat(dset['time'][i], dset['elec'][i].shape[0]),
+                              dset['gas'][i], dset['petrol'][i]], batch_size=1)[0]
+        pred = unstandardize(dset['gdp'], pred.mean()).round(6)
+        predictions[i] = pred
+        residuals[i] = pred - unstandardize(dset['gdp'], labs[i])
+        print(f'Predicted: ${pred}\tActual: ${unstandardize(dset["gdp"], labs[i])}')
+
+    return (predictions, residuals)
+
+
 def get_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('trainx', type=str, help='Training dataset of electricity residuals')
-    parser.add_argument('trainy', type=str, help='Training dataset of quarterly GDP values')
     parser.add_argument('-lr', type=float, help='The learning rate (a float)', default=0.01)
 
     # CNN parameters
@@ -335,8 +335,6 @@ def run(args):
     adjusted for a given training. These hyperparameters can be tuned for best
     performance:
 
-    trainx - File path to training dataset values
-    trainy - File path to training dataset labels
     lr - Optimization algorithm's learning rate
     C - Convolutional layers
     L1 - Hidden layer after convolutional layers
