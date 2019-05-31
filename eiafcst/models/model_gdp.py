@@ -112,7 +112,7 @@ def train_model(train, dev, hpars, model, plots=True):
                                   validation_steps=len(dev['elec']))
 
     plot_history(history,
-                 cols=['DecoderOutput_mean_absolute_error', 'val_DecoderOutput_mean_absolute_error',
+                 cols=['DecoderOut_mean_absolute_error', 'val_DecoderOut_mean_absolute_error',
                        'GDP_Output_mean_absolute_error', 'val_GDP_Output_mean_absolute_error'],
                  labs=['Train Decoder Error', 'Val Decoder Error', 'Train GDP Error', 'Val GDP Error'],
                  savefile='gdp_train_history.png')
@@ -164,13 +164,13 @@ def parse_conv_layers(conv_layers):
     """
     Parse convolutional layers argument.
 
-    Returns tuple (filters, kernel_size, pool_size) for each layer.
+    Returns tuple (kernel_size, filters, pool_size) for each layer.
     """
     conv_params = []
     for layer in conv_layers.split(','):
         params = [int(p) for p in layer.split('-')]
         if len(params) < 2:
-            raise ValueError('-C must be [filters]-[kernel_size]-[pool_size (optional)],[filters]-...')
+            raise ValueError('-C must be [kernel_size]-[filters]-[pool_size (optional)],[filters]-...')
         elif len(params) == 2:
             params.append(2)
             conv_params.append(tuple(params))
@@ -210,19 +210,20 @@ def build_model(nhr, nreg, lr, wg, wd, conv_layers, l1, l2, lgdp):
     # moving along just one dimension.
     # Parameters for the convolutional layers are given as a comma-separated argument:
     #
-    #     [filters]-[kernel_size]-[pool_size (optional)],[filters]-...
+    #     [kernel_size]-[filters]-[pool_size (optional)],[filters]-...
     #
     # These are fed directly into the Conv1D layer, which has parameters:
     #     Conv1D(filters, kernel_size, ...)
     conv_params = parse_conv_layers(conv_layers)
-    last_conv_filters, last_conv_length = conv_params[1][: 2]
 
-    convolutions = layers.Conv1D(conv_params[0][1], conv_params[0][0], padding='same', activation='relu')(input_numeric)
-    convolutions = layers.MaxPool1D(conv_params[0][2])(convolutions)
-
-    for param_set in conv_params[1:]:
-        convolutions = layers.Conv1D(param_set[1], param_set[0], padding='same', activation='relu')(convolutions)
+    i = 0
+    for param_set in conv_params:
+        if i == 0:
+            convolutions = layers.Conv1D(param_set[1], param_set[0], padding='same', activation='relu')(input_numeric)
+        else:
+            convolutions = layers.Conv1D(param_set[1], param_set[0], padding='same', activation='relu')(convolutions)
         convolutions = layers.MaxPool1D(param_set[2])(convolutions)
+        i += 1
 
     feature_layer = layers.Flatten()(convolutions)
 
@@ -230,18 +231,19 @@ def build_model(nhr, nreg, lr, wg, wd, conv_layers, l1, l2, lgdp):
     encoded = layers.Dense(l1, activation='relu')(feature_layer)
     encoded = layers.Dense(l2, activation='relu', name='FinalEncoding')(encoded)
 
-    # At this point, the representation is the most encoded and small
-    # Now let's build the decoder
+    # At this point, the representation is the most encoded and small; now let's build the decoder
     decoded = layers.Dense(l1, activation='relu')(encoded)
-    decoded = layers.Dense(last_conv_filters * last_conv_length, activation='relu')(decoded)
+    decoded = layers.Dense(convolutions.shape[1] * convolutions.shape[2], activation='relu')(decoded)
 
-    decoded = layers.Reshape((last_conv_filters, last_conv_length), name='UnFlatten')(decoded)
+    decoded = layers.Reshape((convolutions.shape[1], convolutions.shape[2]), name='UnFlatten')(decoded)
 
     for param_set in reversed(conv_params):
-        decoded = layers.Conv1D(param_set[1], param_set[0], padding='same', activation='relu')(decoded)
+        i -= 1
         decoded = layers.UpSampling1D(param_set[2])(decoded)
-
-    decoded = layers.Conv1D(nreg, conv_params[0][0], padding='same', activation='relu', name='DecoderOutput')(decoded)
+        if i == 0:
+            decoded = layers.Conv1D(nreg, param_set[0], padding='same', activation='relu', name='DecoderOut')(decoded)
+        else:
+            decoded = layers.Conv1D(conv_params[i - 1][1], param_set[0], padding='same', activation='relu')(decoded)
 
     # Time since start input (for dealing with energy efficiency changes)
     input_time = layers.Input(shape=(1,), name='TimeSinceStart')
@@ -260,8 +262,8 @@ def build_model(nhr, nreg, lr, wg, wd, conv_layers, l1, l2, lgdp):
     autoencoder = keras.models.Model([input_numeric, input_time, input_gas, input_petrol], [output, decoded])
 
     # Specify loss functions and weights for each output
-    autoencoder.compile(loss={'GDP_Output': 'mean_squared_error', 'DecoderOutput': 'mean_squared_error'},
-                        loss_weights={'GDP_Output': wg, 'DecoderOutput': wd},
+    autoencoder.compile(loss={'GDP_Output': 'mean_squared_error', 'DecoderOut': 'mean_squared_error'},
+                        loss_weights={'GDP_Output': wg, 'DecoderOut': wd},
                         optimizer=tf.keras.optimizers.RMSprop(lr=lr),
                         metrics=['mean_absolute_error', 'mean_squared_error'])
     return autoencoder
@@ -347,9 +349,11 @@ def run(args):
     """
     st = time.time()
 
+    # avoid clutter from old models / layers
+    keras.backend.clear_session()
+
     # Set up diagnostics
     hyperparams = [k for k in vars(args).keys()]
-    hpar_values = [str(v) for k, v in vars(args).items()]
     res_metrics = ['decoder_mae', 'GDP_mae', 'train_residuals_abs_mean', 'validation_residuals_abs_mean', 'nepoch']
     diag_file = DiagnosticFile('gdp_results.csv', hyperparams, res_metrics)
 
@@ -361,6 +365,7 @@ def run(args):
 
     # Record results
     notes = ''
+    hpar_values = [v for k, v in vars(args).items()]
     diag_file.write(hpar_values, results, notes)
 
     print(f'Done in {time.time() - st} seconds.')
