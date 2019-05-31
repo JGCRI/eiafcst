@@ -58,7 +58,7 @@ class ArgBuilder:
         return c
 
 
-def optimize(n):
+def optimize(n, out='gdp_results.csv'):
     """
     Optimize parameters.
 
@@ -87,7 +87,7 @@ def optimize(n):
 
     for i in range(n):
         args = ArgBuilder(r_lr, r_Cn, r_Ck, r_Cf, r_L1, r_L2, r_lgdp, r_w)
-        run(args)
+        run(args, out)
 
 
 if __name__ == '__main__':
@@ -98,4 +98,9 @@ if __name__ == '__main__':
     except ValueError:
         raise "Please provide an integer for how many random searches to run."
 
-    optimize(n)
+    try:
+        out = sys.argv[2]
+    except IndexError:
+        raise "Please provide an output file name."
+
+    optimize(n, out)

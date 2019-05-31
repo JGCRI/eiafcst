@@ -331,7 +331,7 @@ def get_args():
     return parser.parse_args()
 
 
-def run(args):
+def run(args, diag_fname='gdp_results.csv'):
     """
     Get hyperparams, load and standardize data, train and evaluate.
 
@@ -359,7 +359,7 @@ def run(args):
     # Set up diagnostics
     hyperparams = [k for k in vars(args).keys()]
     res_metrics = ['decoder_mae', 'GDP_mae', 'train_residuals_abs_mean', 'validation_residuals_abs_mean', 'nepoch']
-    diag_file = DiagnosticFile('gdp_results.csv', hyperparams, res_metrics)
+    diag_file = DiagnosticFile(diag_fname, hyperparams, res_metrics)
 
     # Load inputs
     train, dev = load_inputs(['train', 'dev'])
