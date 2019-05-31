@@ -171,7 +171,7 @@ class DiagnosticFile:
         """
         diag_dir = resource_filename('eiafcst', path.join('models', 'diagnostic'))
         self.fname = path.join(diag_dir, fname)
-        self.columns = hyperparams + res_metrics + ['notes']
+        self.columns = hyperparams + res_metrics + ['seconds', 'notes']
 
         try:
             results_file = pd.read_csv(self.fname)
@@ -181,15 +181,16 @@ class DiagnosticFile:
             results_file = pd.DataFrame(columns=self.columns)
             results_file.to_csv(self.fname, index=False)
 
-    def write(self, hyper_values, results, notes):
+    def write(self, hyper_values, results, seconds, notes):
         """
         Write the results of a model training.
 
         :param hyper_values:    the training run's hyperparameter values
         :param results:         the training run's diagnostic metrics
+        :param seconds:         the time it took to perform the training run
         :param notes:           any notes to be added to final column
         """
-        diag_values = hyper_values + list(results) + [notes]
+        diag_values = hyper_values + list(results) + [seconds, notes]
 
         results_file = pd.read_csv(self.fname)
         results_file.loc[results_file.index.max() + 1] = diag_values

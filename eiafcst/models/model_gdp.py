@@ -45,7 +45,8 @@ def load_inputs(dsets):
     for dset in dsets:
         input_dir = resource_filename('eiafcst', os.path.join('models', 'gdp', dset))
         dset_files = os.listdir(input_dir)
-        inputs.append({f.replace('.npy', ''): np.load(os.path.join(input_dir, f)) for f in dset_files})
+        inputs.append({f.replace('.npy', ''): np.load(os.path.join(input_dir, f), allow_pickle=True)
+                       for f in dset_files})
 
     return inputs
 
@@ -76,7 +77,8 @@ def train_model(train, dev, hpars, model, plots=True):
 
     model.summary()
 
-    plot_model(model, to_file='gdp_model.png', show_shapes=True, show_layer_names=True)
+    if plots:
+        plot_model(model, to_file='gdp_model.png', show_shapes=True, show_layer_names=True)
 
     # The input arrays have 2 dimensions of variable size:
     #  1. The number of cases (quarters)
@@ -111,11 +113,12 @@ def train_model(train, dev, hpars, model, plots=True):
                                                                   dev['petrol'], dev_labels),
                                   validation_steps=len(dev['elec']))
 
-    plot_history(history,
-                 cols=['DecoderOut_mean_absolute_error', 'val_DecoderOut_mean_absolute_error',
-                       'GDP_Output_mean_absolute_error', 'val_GDP_Output_mean_absolute_error'],
-                 labs=['Train Decoder Error', 'Val Decoder Error', 'Train GDP Error', 'Val GDP Error'],
-                 savefile='gdp_train_history.png')
+    if plots:
+        plot_history(history,
+                     cols=['DecoderOut_mean_absolute_error', 'val_DecoderOut_mean_absolute_error',
+                           'GDP_Output_mean_absolute_error', 'val_GDP_Output_mean_absolute_error'],
+                     labs=['Train Decoder Error', 'Val Decoder Error', 'Train GDP Error', 'Val GDP Error'],
+                     savefile='gdp_train_history.png')
 
     # Evaluate the model on our validation set
     metrics = model.evaluate_generator(generator=batch_generator(dev['elec'], dev['time'], dev['gas'],
@@ -133,29 +136,30 @@ def train_model(train, dev, hpars, model, plots=True):
     print(f"Validation set residuals absolute mean {dev_resid_abs_mean}")
     print(f"Training set residuals absolute mean {train_resid_abs_mean}")
 
-    # Plot residuals
-    plt.xlabel('Timestep')
-    plt.ylabel('Prediction residual (Billion USD)')
-    plt.scatter(dev['time'], dev_residuals, c='#ef8a62', label='development')
-    plt.scatter(train['time'], train_residuals, c='#67a9cf', label='train')
-    plt.title('Residuals')
-    plt.legend()
-    plt.savefig('gdp_residuals.png')
-    plt.clf()
+    if plots:
+        # Plot residuals
+        plt.xlabel('Timestep')
+        plt.ylabel('Prediction residual (Billion USD)')
+        plt.scatter(dev['time'], dev_residuals, c='#ef8a62', label='development')
+        plt.scatter(train['time'], train_residuals, c='#67a9cf', label='train')
+        plt.title('Residuals')
+        plt.legend()
+        plt.savefig('gdp_residuals.png')
+        plt.clf()
 
-    # Plot predictions
-    boundmin = min(train_predictions) - 400
-    boundmax = max(train_predictions) + 400
-    plt.scatter([unstandardize(train['gdp'], train_labels[i]) for i in range(len(train_labels))], train_predictions)
-    plt.xlabel('True Values (Billion $USD)')
-    plt.ylabel('Predictions (Billion $USD)')
-    plt.title('Predicted vs. True')
-    plt.axis('equal')
-    plt.axis('square')
-    plt.xlim([boundmin, boundmax])
-    plt.ylim([boundmin, boundmax])
-    plt.savefig('gdp_predicted_v_true.png')
-    plt.clf()
+        # Plot predictions
+        boundmin = min(train_predictions) - 400
+        boundmax = max(train_predictions) + 400
+        plt.scatter([unstandardize(train['gdp'], train_labels[i]) for i in range(len(train_labels))], train_predictions)
+        plt.xlabel('True Values (Billion $USD)')
+        plt.ylabel('Predictions (Billion $USD)')
+        plt.title('Predicted vs. True')
+        plt.axis('equal')
+        plt.axis('square')
+        plt.xlim([boundmin, boundmax])
+        plt.ylim([boundmin, boundmax])
+        plt.savefig('gdp_predicted_v_true.png')
+        plt.clf()
 
     return dec_mae, gdp_mae, train_resid_abs_mean, dev_resid_abs_mean, len(history.history['loss'])
 
@@ -361,12 +365,13 @@ def run(args):
     train, dev = load_inputs(['train', 'dev'])
 
     # Run model
-    results = train_model(train, dev, args, args.model, plots=True)
+    results = train_model(train, dev, args, args.model, plots=False)
 
     # Record results
     notes = ''
+    time_taken = int(time.time() - st)
     hpar_values = [v for k, v in vars(args).items()]
-    diag_file.write(hpar_values, results, notes)
+    diag_file.write(hpar_values, results, time_taken, notes)
 
     print(f'Done in {time.time() - st} seconds.')
 
