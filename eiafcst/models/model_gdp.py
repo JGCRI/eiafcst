@@ -29,7 +29,11 @@ from tensorflow.keras.utils import plot_model
 
 def unstandardize(gdp_orig, val):
     """Convert standardized GDP to dollar values."""
-    return round(val * gdp_orig.std() + gdp_orig.mean(), 2)
+    val = val * gdp_orig.std() + gdp_orig.mean()
+    if isinstance(val, float):
+        return round(val, 2)
+    else:
+        return val.round(2)
 
 
 def load_inputs(dsets):
@@ -51,7 +55,35 @@ def load_inputs(dsets):
     return inputs
 
 
-def train_model(train, dev, hpars, model, plots=True):
+def batch_generator(ele_residuals, timestep, gas_arr, pet_arr, labels):
+    """
+    Generate a batch for training or evaluating the model.
+
+    The input arrays have 2 dimensions of variable size:
+     1. The number of cases (quarters)
+     2. The number of weeks in a case
+    The data therefore cannot be represented as a numpy array because not
+    all dimensions match. To work around this, the data is provided from a
+    generator where each batch is one case, so the input array has a fixed
+    number of weeks (although this number is variable in each batch) and can
+    be represented in a 3d numpy array.
+    """
+    i = 0
+    while True:
+        # print(f'Input length: {len(elec_residuals)}\tBATCH #{i % len(elec_residuals)}')
+        ele = ele_residuals[i]
+        gas = gas_arr[i]
+        pet = pet_arr[i]
+
+        nwk = ele.shape[0]
+        ts = np.repeat(timestep[i], nwk)
+        labs = np.repeat(labels[i], nwk)
+
+        yield ([ele, ts, gas, pet], [labs, ele])
+        i = (i + 1) % len(ele_residuals)
+
+
+def train_model(train, dev, hpars, save_best, plots=True):
     """
     Run the deep learning model.
 
@@ -61,7 +93,7 @@ def train_model(train, dev, hpars, model, plots=True):
     :param train:       Dictionary of all training datasets for all inputs and outputs.
     :param dev:         Dictionary of all validation datasets for all inputs and outputs.
     :param hpars:       Dictionary of all hyperparameters.
-    :param model:       Location to store best model; if empty, does not save.
+    :param save_best:   Location to store best model; if empty, does not save.
     :param plots:       Boolean; generate plots of model performance? [default: True]
     """
     # standardize GDP values (elec values already standardized from prev. model)
@@ -80,38 +112,23 @@ def train_model(train, dev, hpars, model, plots=True):
     if plots:
         plot_model(model, to_file='gdp_model.png', show_shapes=True, show_layer_names=True)
 
-    # The input arrays have 2 dimensions of variable size:
-    #  1. The number of cases (quarters)
-    #  2. The number of weeks in a case
-    # The data therefore cannot be represented as a numpy array because not
-    # all dimensions match. To work around this, the data is provided from a
-    # generator where each batch is one case, so the input array has a fixed
-    # number of weeks (although this number is variable in each batch) and can
-    # be represented in a 3d numpy array.
-    def batch_generator(ele_residuals, timestep, gas_residuals, pet_residuals, labels):
-        i = 0
-        while True:
-            # print(f'Input length: {len(elec_residuals)}\tBATCH #{i % len(elec_residuals)}')
-            ele = ele_residuals[i % len(ele_residuals)]
-            gas = gas_residuals[i % len(ele_residuals)]
-            pet = pet_residuals[i % len(ele_residuals)]
-            ts = np.repeat(timestep[i % len(ele_residuals)], ele.shape[0])
-            labs = np.repeat(labels[i % len(ele_residuals)], ele.shape[0])
-            yield ([ele, ts, gas, pet], [labs, ele])
-            i += 1
-
     # The patience parameter is the amount of epochs to check for improvement
     early_stop = keras.callbacks.EarlyStopping(monitor='val_loss', patience=hpars.patience, restore_best_weights=True)
 
-    history = model.fit_generator(generator=batch_generator(train['elec'], train['time'], train['gas'],
-                                                            train['petrol'], train_labels),
+    # Batches are not all equally sized, so they need to be generated on the fly
+    train_generator = batch_generator(train['elec'], train['time'], train['gas'], train['petrol'], train_labels)
+    dev_generator = batch_generator(dev['elec'], dev['time'], dev['gas'], dev['petrol'], dev_labels)
+
+    history = model.fit_generator(generator=train_generator,
                                   steps_per_epoch=len(train['elec']),
                                   epochs=hpars.epochs,
                                   verbose=0,
                                   callbacks=[early_stop],
-                                  validation_data=batch_generator(dev['elec'], dev['time'], dev['gas'],
-                                                                  dev['petrol'], dev_labels),
+                                  validation_data=dev_generator,
                                   validation_steps=len(dev['elec']))
+
+    if save_best:
+        model.save()
 
     if plots:
         plot_history(history,
@@ -121,12 +138,13 @@ def train_model(train, dev, hpars, model, plots=True):
                      savefile='gdp_train_history.png')
 
     # Evaluate the model on our validation set
-    metrics = model.evaluate_generator(generator=batch_generator(dev['elec'], dev['time'], dev['gas'],
-                                                                 dev['petrol'], dev_labels),
-                                       steps=len(dev['elec']))
+    dev_metrics = model.evaluate_generator(generator=batch_generator(dev['elec'], dev['time'], dev['gas'],
+                                                                     dev['petrol'], dev_labels),
+                                           steps=len(dev['elec']))
 
-    gdp_mae = metrics[3]
-    dec_mae = metrics[5]
+    # Metrics are specified in build_model
+    dev_gdp_mae = dev_metrics[3]
+    dev_dec_mae = dev_metrics[5]
 
     train_predictions, train_residuals = run_prediction(model, train, 'training', train_labels)
     dev_predictions, dev_residuals = run_prediction(model, dev, 'development', dev_labels)
@@ -150,7 +168,8 @@ def train_model(train, dev, hpars, model, plots=True):
         # Plot predictions
         boundmin = min(train_predictions) - 400
         boundmax = max(train_predictions) + 400
-        plt.scatter([unstandardize(train['gdp'], train_labels[i]) for i in range(len(train_labels))], train_predictions)
+        plt.scatter(train['gdp'], train_predictions)
+        plt.scatter(dev['gdp'], dev_predictions)
         plt.xlabel('True Values (Billion $USD)')
         plt.ylabel('Predictions (Billion $USD)')
         plt.title('Predicted vs. True')
@@ -161,25 +180,39 @@ def train_model(train, dev, hpars, model, plots=True):
         plt.savefig('gdp_predicted_v_true.png')
         plt.clf()
 
-    return dec_mae, gdp_mae, train_resid_abs_mean, dev_resid_abs_mean, len(history.history['loss'])
+        # Predictions timeline
+        timex = np.concatenate([train['time'], dev['time']])
+        order = np.argsort(timex)
+        predsy = np.concatenate([train_predictions, dev_predictions])[order]
+        truesy = np.concatenate([train['gdp'], dev['gdp']])[order]
+        plt.plot(timex[order], truesy, label='True Values')
+        plt.plot(timex[order], predsy, label='Predictions')
+        plt.scatter(dev['time'], dev_predictions, label='Dev set predictions')
+        plt.xlabel('Quarters since 2006Q1')
+        plt.ylabel('Billion $USD')
+        plt.legend()
+        plt.show()
+
+    return dev_dec_mae, dev_gdp_mae, train_resid_abs_mean, dev_resid_abs_mean, len(history.history['loss'])
 
 
 def parse_conv_layers(conv_layers):
     """
     Parse convolutional layers argument.
 
-    Returns tuple (kernel_size, filters, pool_size) for each layer.
+    Returns tuple (kernel_size, filters, pool_size) for each layer. Pool size
+    is optional and will be given a default value of 2 if not specified.
     """
     conv_params = []
     for layer in conv_layers.split(','):
         params = [int(p) for p in layer.split('-')]
-        if len(params) < 2:
+        if len(params) < 2 or 3 < len(params):
             raise ValueError('-C must be [kernel_size]-[filters]-[pool_size (optional)],[filters]-...')
         elif len(params) == 2:
             params.append(2)
             conv_params.append(tuple(params))
         else:
-            conv_params.append(tuple(params[: 3]))
+            conv_params.append(tuple(params))  # All 3 options provided
 
     assert conv_params  # Make sure at least one was added
     return conv_params
@@ -245,7 +278,8 @@ def build_model(nhr, nreg, lr, wg, wd, conv_layers, l1, l2, lgdp):
         i -= 1
         decoded = layers.UpSampling1D(param_set[2])(decoded)
         if i == 0:
-            decoded = layers.Conv1D(nreg, param_set[0], padding='same', activation='relu', name='DecoderOut')(decoded)
+            decoded = layers.Conv1D(nreg, param_set[0], padding='same',
+                                    activation='relu', name='DecoderOut')(decoded)
         else:
             decoded = layers.Conv1D(conv_params[i - 1][1], param_set[0], padding='same', activation='relu')(decoded)
 
