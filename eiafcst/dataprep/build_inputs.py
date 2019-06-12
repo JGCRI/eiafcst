@@ -40,7 +40,7 @@ def load_fuel(fp, fuel_type, syear, eyear):
 
     # Filter to best GDP categories for natural gas
     if fuel_type == 'gas':
-        gdp_categories = ['Industrial Consumption', 'Lease and Plant Fuel Consumption', 'Pipeline & Distrubtion Use']
+        gdp_categories = ['Industrial Consumption', 'Lease and Plant Fuel Consumption', 'Pipeline & Distribution Use']
         fuel = fuel[fuel[var_col].isin(gdp_categories)]
 
     # Aggregate categories to weekly total
@@ -141,6 +141,7 @@ def main():
     elec_residuals = elec_residuals_to_cases(elec_residuals)
 
     gdp = parse_gdp(GDP_LABELS_PATH, syear, eyear)
+    gdp_prev = parse_gdp(GDP_LABELS_PATH, syear - 1, eyear)
 
     fp = FuelParser.FuelParser()
     gas = load_fuel(fp, 'gas', syear, eyear)
@@ -171,6 +172,7 @@ def main():
         np.save(os.path.join(outdir, 'gas.npy'), gas_subset)
         np.save(os.path.join(outdir, 'petrol.npy'), petrol_subset)
         np.save(os.path.join(outdir, 'gdp.npy'), gdp.gdp.values[idx])
+        np.save(os.path.join(outdir, 'gdp_prev.npy'), gdp.gdp.values[idx - 3])
         np.save(os.path.join(outdir, 'time.npy'), idx)
 
 

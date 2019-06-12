@@ -76,7 +76,7 @@ def batch_generator(ele_residuals, timestep, gas_arr, pet_arr, labels):
         pet = pet_arr[i]
 
         nwk = ele.shape[0]
-        ts = np.repeat(timestep[i], nwk)
+        ts = np.arange(timestep[i], timestep[i] + 1, 1 / nwk)
         labs = np.repeat(labels[i], nwk)
 
         yield ([ele, ts, gas, pet], [labs, ele])
@@ -128,7 +128,7 @@ def train_model(train, dev, hpars, save_best, plots=True):
                                   validation_steps=len(dev['elec']))
 
     if save_best:
-        model.save()
+        model.save(save_best)
 
     if plots:
         plot_history(history,
@@ -256,21 +256,24 @@ def build_model(nhr, nreg, lr, wg, wd, conv_layers, l1, l2, lgdp):
     i = 0
     for param_set in conv_params:
         if i == 0:
-            convolutions = layers.Conv1D(param_set[1], param_set[0], padding='same', activation='relu')(input_numeric)
+            convolutions = layers.Conv1D(param_set[1], param_set[0], padding='same',
+                                         activation='relu', bias_initializer='glorot_uniform')(input_numeric)
         else:
-            convolutions = layers.Conv1D(param_set[1], param_set[0], padding='same', activation='relu')(convolutions)
+            convolutions = layers.Conv1D(param_set[1], param_set[0], padding='same',
+                                         activation='relu', bias_initializer='glorot_uniform')(convolutions)
         convolutions = layers.MaxPool1D(param_set[2])(convolutions)
         i += 1
 
     feature_layer = layers.Flatten()(convolutions)
 
     # Merge the inputs together and end our encoding with fully connected layers
-    encoded = layers.Dense(l1, activation='relu')(feature_layer)
-    encoded = layers.Dense(l2, activation='relu', name='FinalEncoding')(encoded)
+    encoded = layers.Dense(l1, activation='relu', bias_initializer='glorot_uniform')(feature_layer)
+    encoded = layers.Dense(l2, activation='relu', bias_initializer='glorot_uniform', name='FinalEncoding')(encoded)
 
     # At this point, the representation is the most encoded and small; now let's build the decoder
-    decoded = layers.Dense(l1, activation='relu')(encoded)
-    decoded = layers.Dense(convolutions.shape[1] * convolutions.shape[2], activation='relu')(decoded)
+    decoded = layers.Dense(l1, activation='relu', bias_initializer='glorot_uniform')(encoded)
+    decoded = layers.Dense(convolutions.shape[1] * convolutions.shape[2],
+                           activation='relu', bias_initializer='glorot_uniform')(decoded)
 
     decoded = layers.Reshape((convolutions.shape[1], convolutions.shape[2]), name='UnFlatten')(decoded)
 
@@ -278,10 +281,11 @@ def build_model(nhr, nreg, lr, wg, wd, conv_layers, l1, l2, lgdp):
         i -= 1
         decoded = layers.UpSampling1D(param_set[2])(decoded)
         if i == 0:
-            decoded = layers.Conv1D(nreg, param_set[0], padding='same',
-                                    activation='relu', name='DecoderOut')(decoded)
+            decoded = layers.Conv1D(nreg, param_set[0], padding='same', activation='relu',
+                                    bias_initializer='glorot_uniform', name='DecoderOut')(decoded)
         else:
-            decoded = layers.Conv1D(conv_params[i - 1][1], param_set[0], padding='same', activation='relu')(decoded)
+            decoded = layers.Conv1D(conv_params[i - 1][1], param_set[0], padding='same',
+                                    activation='relu', bias_initializer='glorot_uniform')(decoded)
 
     # Time since start input (for dealing with energy efficiency changes)
     input_time = layers.Input(shape=(1,), name='TimeSinceStart')
@@ -294,7 +298,8 @@ def build_model(nhr, nreg, lr, wg, wd, conv_layers, l1, l2, lgdp):
 
     # This is our actual output, the GDP prediction
     merged_layer = layers.Concatenate()([encoded, input_time, input_gas, input_petrol])
-    output = layers.Dense(lgdp, activation='relu', name='OutputHiddenLayer')(merged_layer)
+    output = layers.Dense(lgdp, activation='relu', bias_initializer='glorot_uniform',
+                          name='OutputHiddenLayer')(merged_layer)
     output = layers.Dense(1, activation='linear', name='GDP_Output')(output)
 
     autoencoder = keras.models.Model([input_numeric, input_time, input_gas, input_petrol], [output, decoded])
@@ -317,8 +322,14 @@ def run_prediction(model, dset, dset_name, labs):
     residuals = np.empty(len(dset['elec']))
     print(f'Predicting GDP with {dset_name} data')
     for i in range(len(dset['elec'])):
-        pred = model.predict([dset['elec'][i], np.repeat(dset['time'][i], dset['elec'][i].shape[0]),
-                              dset['gas'][i], dset['petrol'][i]], batch_size=1)[0]
+        ele = dset['elec'][i]
+        gas = dset['gas'][i]
+        pet = dset['petrol'][i]
+
+        nwk = ele.shape[0]
+        ts = np.arange(dset['time'][i], dset['time'][i] + 1, 1 / nwk)
+
+        pred = model.predict([ele, ts, gas, pet], batch_size=1)[0]
         pred = unstandardize(dset['gdp'], pred.mean()).round(6)
         predictions[i] = pred
         residuals[i] = pred - unstandardize(dset['gdp'], labs[i])
@@ -340,10 +351,10 @@ def get_args():
     # Hidden layers parameters
     hl1_help = 'The number of units in the first hidden layer (int) [default: 16]'
     hl2_help = 'The number of units in the final encoding (int) [default: 8]'
-    hlg_help = 'The number of units in the hidden layer of the GDP branch (int) [default: 16]'
+    hlg_help = 'The number of units in the hidden layer of the GDP branch (int) [default: 12]'
     parser.add_argument('-L1', type=int, help=hl1_help, default=16)
     parser.add_argument('-L2', type=int, help=hl2_help, default=8)
-    parser.add_argument('-lgdp', type=int, help=hlg_help, default=16)
+    parser.add_argument('-lgdp', type=int, help=hlg_help, default=12)
 
     # Loss function weights
     parser.add_argument('-wgdp', type=float,
@@ -399,7 +410,7 @@ def run(args, diag_fname='gdp_results.csv'):
     train, dev = load_inputs(['train', 'dev'])
 
     # Run model
-    results = train_model(train, dev, args, args.model, plots=False)
+    results = train_model(train, dev, args, args.model, plots=True)
 
     # Record results
     notes = ''

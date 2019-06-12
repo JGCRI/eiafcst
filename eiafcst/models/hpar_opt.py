@@ -6,7 +6,6 @@ Caleb Braun
 """
 import numpy as np
 import sys
-from functools import reduce
 
 from eiafcst.models.model_gdp import run
 
@@ -73,7 +72,7 @@ def optimize(n, out='gdp_results.csv'):
         wgdp - Weight given to GDP output
         wdec - Weight given to decoder output
     """
-    r_lr = np.array([0.01, 0.001])
+    r_lr = np.array([0.001, 0.0001])
 
     # ranges for the convolutional layers (n: how many, k: kernel size, f: filter size, p: pool size)
     r_Cn = np.arange(1, 3 + 1)
