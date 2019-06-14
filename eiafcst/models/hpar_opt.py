@@ -27,8 +27,7 @@ class ArgBuilder:
         self.wdec = 1 - self.wgdp
 
         self.epochs = 5000
-        self.patience = [300, 150, 50][int(np.log10(self.lr))]  # higher patience for lower learning rate
-        self.model = f'eiafcst/models/diagnostic/gdp/model{id}.h5'
+        self.patience = [500, 300, 150, 50][int(np.log10(self.lr))]  # higher patience for lower learning rate
 
     @staticmethod
     def factors(n):
@@ -57,11 +56,13 @@ class ArgBuilder:
         return c
 
 
-def optimize(n, out='gdp_results.csv'):
+def optimize(n, repeat=3, out='gdp_results.csv'):
     """
     Optimize parameters.
 
-    :param n:   How many variations to run (int)
+    :param n:       How many variations to run (int)
+    :param repeat:  How many times to repeat each variation
+    :param out:     File name to store results in
 
     The hyperparameters we need to optimize are:
         lr - Learning Rate
@@ -81,12 +82,14 @@ def optimize(n, out='gdp_results.csv'):
 
     r_L1 = np.arange(2, 32 + 1)
     r_L2 = np.arange(2, 16 + 1)
-    r_lgdp = np.arange(2, 32 + 1)
-    r_w = np.arange(0.01, 1, 0.01)
+    r_lgdp = np.arange(0, 12 + 1)
+    r_w = np.arange(0, 1.01, 0.01)
 
     for i in range(n):
-        args = ArgBuilder(i, r_lr, r_Cn, r_Ck, r_Cf, r_L1, r_L2, r_lgdp, r_w)
-        run(args, out)
+        for j in range(repeat):
+            args = ArgBuilder(i, r_lr, r_Cn, r_Ck, r_Cf, r_L1, r_L2, r_lgdp, r_w)
+            args.model = f'eiafcst/models/diagnostic/gdp/{out.split(".")[0]}_{i}-{j}.h5'
+            run(args, out)
 
 
 if __name__ == '__main__':
