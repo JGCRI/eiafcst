@@ -13,7 +13,7 @@ from eiafcst.models.model_gdp import run
 class ArgBuilder:
     """Generate a simple class containing random argument values."""
 
-    def __init__(self, r_lr, r_Cn, r_Ck, r_Cf, r_L1, r_L2, r_lgdp, r_w):
+    def __init__(self, id, r_lr, r_Cn, r_Ck, r_Cf, r_L1, r_L2, r_lgdp, r_w):
         """Randomly sample from input hyperparameter ranges."""
         self.lr = np.random.choice(r_lr)
 
@@ -28,7 +28,7 @@ class ArgBuilder:
 
         self.epochs = 5000
         self.patience = [300, 150, 50][int(np.log10(self.lr))]  # higher patience for lower learning rate
-        self.model = ''  # Don't save model
+        self.model = f'eiafcst/models/diagnostic/gdp/model{id}.h5'
 
     @staticmethod
     def factors(n):
@@ -85,7 +85,7 @@ def optimize(n, out='gdp_results.csv'):
     r_w = np.arange(0.01, 1, 0.01)
 
     for i in range(n):
-        args = ArgBuilder(r_lr, r_Cn, r_Ck, r_Cf, r_L1, r_L2, r_lgdp, r_w)
+        args = ArgBuilder(i, r_lr, r_Cn, r_Ck, r_Cf, r_L1, r_L2, r_lgdp, r_w)
         run(args, out)
 
 

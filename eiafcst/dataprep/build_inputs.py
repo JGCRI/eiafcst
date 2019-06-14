@@ -143,6 +143,9 @@ def main():
     gdp = parse_gdp(GDP_LABELS_PATH, syear, eyear)
     gdp_prev = parse_gdp(GDP_LABELS_PATH, syear - 1, eyear)
 
+    # gdp_prev is just another indicator, let's standardize it
+    gdp_prev['gdp'] = (gdp_prev['gdp'] - gdp_prev['gdp'].mean()) / gdp_prev['gdp'].std()
+
     fp = FuelParser.FuelParser()
     gas = load_fuel(fp, 'gas', syear, eyear)
     petrol = load_fuel(fp, 'petrol', syear, eyear)
@@ -172,7 +175,7 @@ def main():
         np.save(os.path.join(outdir, 'gas.npy'), gas_subset)
         np.save(os.path.join(outdir, 'petrol.npy'), petrol_subset)
         np.save(os.path.join(outdir, 'gdp.npy'), gdp.gdp.values[idx])
-        np.save(os.path.join(outdir, 'gdp_prev.npy'), gdp.gdp.values[idx - 3])
+        np.save(os.path.join(outdir, 'gdp_prev.npy'), gdp_prev.gdp.values[idx + 3])
         np.save(os.path.join(outdir, 'time.npy'), idx)
 
 

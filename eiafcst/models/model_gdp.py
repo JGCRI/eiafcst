@@ -1,15 +1,16 @@
 """
 Convolutional neural net with auto encoder for predicting GDP from energy use.
 
-Iteration 2
+Iteration 3
 -----------
-For our second attempt, we are using the residuals from the temperature
-and electricity model, as well as natural gas and petroleum inputs. The goal
+For our third attempt, we are using the residuals from the temperature
+and electricity model, as well as natural gas and petroleum inputs. In
+addition, we are inputting the GDP from the previous quarter. The goal
 is to predict quarterly GDP values from these inputs, using a convolutional
 neural network with an auto-encoder.
 
 Caleb Braun
-4/25/19
+6/14/19
 """
 import matplotlib.pyplot as plt
 import numpy as np
@@ -55,7 +56,7 @@ def load_inputs(dsets):
     return inputs
 
 
-def batch_generator(ele_residuals, timestep, gas_arr, pet_arr, labels):
+def batch_generator(ele_residuals, timestep, gdp_prev, gas_arr, pet_arr, labels):
     """
     Generate a batch for training or evaluating the model.
 
@@ -77,9 +78,10 @@ def batch_generator(ele_residuals, timestep, gas_arr, pet_arr, labels):
 
         nwk = ele.shape[0]
         ts = np.arange(timestep[i], timestep[i] + 1, 1 / nwk)
+        gdp = np.repeat(gdp_prev[i], nwk)
         labs = np.repeat(labels[i], nwk)
 
-        yield ([ele, ts, gas, pet], [labs, ele])
+        yield ([ele, ts, gdp, gas, pet], [labs, ele])
         i = (i + 1) % len(ele_residuals)
 
 
@@ -116,8 +118,9 @@ def train_model(train, dev, hpars, save_best, plots=True):
     early_stop = keras.callbacks.EarlyStopping(monitor='val_loss', patience=hpars.patience, restore_best_weights=True)
 
     # Batches are not all equally sized, so they need to be generated on the fly
-    train_generator = batch_generator(train['elec'], train['time'], train['gas'], train['petrol'], train_labels)
-    dev_generator = batch_generator(dev['elec'], dev['time'], dev['gas'], dev['petrol'], dev_labels)
+    train_generator = batch_generator(train['elec'], train['time'], train['gdp_prev'],
+                                      train['gas'], train['petrol'], train_labels)
+    dev_generator = batch_generator(dev['elec'], dev['time'], dev['gdp_prev'], dev['gas'], dev['petrol'], dev_labels)
 
     history = model.fit_generator(generator=train_generator,
                                   steps_per_epoch=len(train['elec']),
@@ -138,8 +141,8 @@ def train_model(train, dev, hpars, save_best, plots=True):
                      savefile='gdp_train_history.png')
 
     # Evaluate the model on our validation set
-    dev_metrics = model.evaluate_generator(generator=batch_generator(dev['elec'], dev['time'], dev['gas'],
-                                                                     dev['petrol'], dev_labels),
+    dev_metrics = model.evaluate_generator(generator=batch_generator(dev['elec'], dev['time'], dev['gdp_prev'],
+                                                                     dev['gas'], dev['petrol'], dev_labels),
                                            steps=len(dev['elec']))
 
     # Metrics are specified in build_model
@@ -267,13 +270,16 @@ def build_model(nhr, nreg, lr, wg, wd, conv_layers, l1, l2, lgdp):
     feature_layer = layers.Flatten()(convolutions)
 
     # Merge the inputs together and end our encoding with fully connected layers
-    encoded = layers.Dense(l1, activation='relu', bias_initializer='glorot_uniform')(feature_layer)
-    encoded = layers.Dense(l2, activation='relu', bias_initializer='glorot_uniform', name='FinalEncoding')(encoded)
+    encoded = layers.Dense(l1, bias_initializer='glorot_uniform')(feature_layer)
+    encoded = layers.LeakyReLU()(encoded)
+    encoded = layers.Dense(l2, bias_initializer='glorot_uniform', name='FinalEncoding')(encoded)
+    encoded = layers.LeakyReLU()(encoded)
 
     # At this point, the representation is the most encoded and small; now let's build the decoder
-    decoded = layers.Dense(l1, activation='relu', bias_initializer='glorot_uniform')(encoded)
-    decoded = layers.Dense(convolutions.shape[1] * convolutions.shape[2],
-                           activation='relu', bias_initializer='glorot_uniform')(decoded)
+    decoded = layers.Dense(l1, bias_initializer='glorot_uniform')(encoded)
+    decoded = layers.LeakyReLU()(decoded)
+    decoded = layers.Dense(convolutions.shape[1] * convolutions.shape[2], bias_initializer='glorot_uniform')(decoded)
+    decoded = layers.LeakyReLU()(decoded)
 
     decoded = layers.Reshape((convolutions.shape[1], convolutions.shape[2]), name='UnFlatten')(decoded)
 
@@ -290,6 +296,9 @@ def build_model(nhr, nreg, lr, wg, wd, conv_layers, l1, l2, lgdp):
     # Time since start input (for dealing with energy efficiency changes)
     input_time = layers.Input(shape=(1,), name='TimeSinceStart')
 
+    # Previous quarter's GDP
+    input_gdp_prev = layers.Input(shape=(1,), name='GDPPrev')
+
     # Natural gas data at a weekly level
     input_gas = layers.Input(shape=(1,), name='NaturalGas')
 
@@ -297,12 +306,15 @@ def build_model(nhr, nreg, lr, wg, wd, conv_layers, l1, l2, lgdp):
     input_petrol = layers.Input(shape=(1,), name='Petroleum')
 
     # This is our actual output, the GDP prediction
-    merged_layer = layers.Concatenate()([encoded, input_time, input_gas, input_petrol])
-    output = layers.Dense(lgdp, activation='relu', bias_initializer='glorot_uniform',
-                          name='OutputHiddenLayer')(merged_layer)
-    output = layers.Dense(1, activation='linear', name='GDP_Output')(output)
+    merged_layer = layers.Concatenate()([encoded, input_time, input_gdp_prev, input_gas, input_petrol])
+    if lgdp > 0:
+        merged_layer = layers.Dense(lgdp)(merged_layer)
+        merged_layer = layers.LeakyReLU()(merged_layer)
 
-    autoencoder = keras.models.Model([input_numeric, input_time, input_gas, input_petrol], [output, decoded])
+    output = layers.Dense(1, activation='linear', name='GDP_Output')(merged_layer)
+
+    autoencoder = keras.models.Model(inputs=[input_numeric, input_time, input_gdp_prev, input_gas, input_petrol],
+                                     outputs=[output, decoded])
 
     # Specify loss functions and weights for each output
     autoencoder.compile(loss={'GDP_Output': 'mean_squared_error', 'DecoderOut': 'mean_squared_error'},
@@ -328,8 +340,9 @@ def run_prediction(model, dset, dset_name, labs):
 
         nwk = ele.shape[0]
         ts = np.arange(dset['time'][i], dset['time'][i] + 1, 1 / nwk)
+        gdp_prev = np.repeat(dset['gdp_prev'][i], nwk)
 
-        pred = model.predict([ele, ts, gas, pet], batch_size=1)[0]
+        pred = model.predict([ele, ts, gdp_prev, gas, pet], batch_size=1)[0]
         pred = unstandardize(dset['gdp'], pred.mean()).round(6)
         predictions[i] = pred
         residuals[i] = pred - unstandardize(dset['gdp'], labs[i])
@@ -410,7 +423,7 @@ def run(args, diag_fname='gdp_results.csv'):
     train, dev = load_inputs(['train', 'dev'])
 
     # Run model
-    results = train_model(train, dev, args, args.model, plots=True)
+    results = train_model(train, dev, args, args.model, plots=False)
 
     # Record results
     notes = ''
