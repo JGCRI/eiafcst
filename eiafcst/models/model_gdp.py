@@ -98,6 +98,10 @@ def train_model(train, dev, hpars, save_best, plots=True):
     :param save_best:   Location to store best model; if empty, does not save.
     :param plots:       Boolean; generate plots of model performance? [default: True]
     """
+    # -----------------------------------------------------------------------
+    # Prepare data for training.
+    # -----------------------------------------------------------------------
+
     # standardize GDP values (elec values already standardized from prev. model)
     train_labels = (train['gdp'] - train['gdp'].mean()) / train['gdp'].std()
     dev_labels = (dev['gdp'] - dev['gdp'].mean()) / dev['gdp'].std()
@@ -107,20 +111,39 @@ def train_model(train, dev, hpars, save_best, plots=True):
     nregion = train['elec'][0].shape[2]
     assert nhrweek == 168
 
-    model = build_model(nhrweek, nregion, hpars.lr, hpars.wgdp, hpars.wdec, hpars.C, hpars.L1, hpars.L2, hpars.lgdp)
-
-    model.summary()
-
-    if plots:
-        plot_model(model, to_file='gdp_model.png', show_shapes=True, show_layer_names=True)
-
-    # The patience parameter is the amount of epochs to check for improvement
-    early_stop = keras.callbacks.EarlyStopping(monitor='val_loss', patience=hpars.patience, restore_best_weights=True)
+    # -----------------------------------------------------------------------
+    # Set up batching and callbacks for training.
+    # -----------------------------------------------------------------------
+    early_stop = keras.callbacks.EarlyStopping(monitor='val_loss',
+                                               patience=hpars.patience,
+                                               restore_best_weights=True)   # Important for keeping best model
 
     # Batches are not all equally sized, so they need to be generated on the fly
     train_generator = batch_generator(train['elec'], train['time'], train['gdp_prev'],
                                       train['gas'], train['petrol'], train_labels)
     dev_generator = batch_generator(dev['elec'], dev['time'], dev['gdp_prev'], dev['gas'], dev['petrol'], dev_labels)
+
+    # -----------------------------------------------------------------------
+    # Build the model
+    # -----------------------------------------------------------------------
+    gdp_out_name = 'GDP_Output'
+    dec_out_name = 'DecoderOut'
+
+    model = build_model(nhrweek, nregion, hpars.C, hpars.L1, hpars.L2, hpars.lgdp, gdp_out_name, dec_out_name)
+
+    if plots:
+        plot_model(model, to_file='gdp_model.png', show_shapes=True, show_layer_names=True)
+
+    # -----------------------------------------------------------------------
+    # Train first the autoencoder, then freeze it and train the GDP branch
+    # -----------------------------------------------------------------------
+    # Freeze GDP layers (just for efficiency)
+    for i, layer in enumerate(model.layers):
+        layer.trainable = not layer.name.startswith('GDP_')  # There's probably a better way to do this
+        print(i, layer.name, layer.trainable)
+
+    model = compile_model(model, gdp_out_name, dec_out_name, 0.0, 1.0, hpars.lr)
+    model.summary()
 
     history = model.fit_generator(generator=train_generator,
                                   steps_per_epoch=len(train['elec']),
@@ -130,15 +153,41 @@ def train_model(train, dev, hpars, save_best, plots=True):
                                   validation_data=dev_generator,
                                   validation_steps=len(dev['elec']))
 
-    if save_best:
-        model.save(save_best)
+    if plots:
+        plot_history(history,
+                     cols=['DecoderOut_mean_absolute_error', 'val_DecoderOut_mean_absolute_error'],
+                     labs=['Train Decoder Error', 'Val Decoder Error', 'Train GDP Error', 'Val GDP Error'],
+                     savefile='dec_train_history.png')
+
+    # Freeze non-GDP layers
+    for i, layer in enumerate(model.layers):
+        layer.trainable = layer.name.startswith('GDP_')  # There's probably a better way to do this
+        print(i, layer.name, layer.trainable)
+
+    model = compile_model(model, gdp_out_name, dec_out_name, 1.0, 0.0, hpars.lr)
+    model.summary()
+
+    # Now do the GDP training
+    history = model.fit_generator(generator=train_generator,
+                                  steps_per_epoch=len(train['elec']),
+                                  epochs=hpars.epochs,
+                                  verbose=0,
+                                  callbacks=[early_stop],
+                                  validation_data=dev_generator,
+                                  validation_steps=len(dev['elec']))
 
     if plots:
         plot_history(history,
-                     cols=['DecoderOut_mean_absolute_error', 'val_DecoderOut_mean_absolute_error',
-                           'GDP_Output_mean_absolute_error', 'val_GDP_Output_mean_absolute_error'],
+                     cols=['GDP_Output_mean_absolute_error', 'val_GDP_Output_mean_absolute_error'],
                      labs=['Train Decoder Error', 'Val Decoder Error', 'Train GDP Error', 'Val GDP Error'],
                      savefile='gdp_train_history.png')
+
+    if save_best:
+        model.save(save_best)
+
+    # -----------------------------------------------------------------------
+    # Model evaluation
+    # -----------------------------------------------------------------------
 
     # Evaluate the model on our validation set
     dev_metrics = model.evaluate_generator(generator=batch_generator(dev['elec'], dev['time'], dev['gdp_prev'],
@@ -221,7 +270,7 @@ def parse_conv_layers(conv_layers):
     return conv_params
 
 
-def build_model(nhr, nreg, lr, wg, wd, conv_layers, l1, l2, lgdp):
+def build_model(nhr, nreg, conv_layers, l1, l2, lgdp, gdp_out_name, dec_out_name):
     """
     Build the convolutional neural network.
 
@@ -288,7 +337,7 @@ def build_model(nhr, nreg, lr, wg, wd, conv_layers, l1, l2, lgdp):
         decoded = layers.UpSampling1D(param_set[2])(decoded)
         if i == 0:
             decoded = layers.Conv1D(nreg, param_set[0], padding='same', activation='relu',
-                                    bias_initializer='glorot_uniform', name='DecoderOut')(decoded)
+                                    bias_initializer='glorot_uniform', name=dec_out_name)(decoded)
         else:
             decoded = layers.Conv1D(conv_params[i - 1][1], param_set[0], padding='same',
                                     activation='relu', bias_initializer='glorot_uniform')(decoded)
@@ -308,20 +357,33 @@ def build_model(nhr, nreg, lr, wg, wd, conv_layers, l1, l2, lgdp):
     # This is our actual output, the GDP prediction
     merged_layer = layers.Concatenate()([encoded, input_time, input_gdp_prev, input_gas, input_petrol])
     if lgdp > 0:
-        merged_layer = layers.Dense(lgdp)(merged_layer)
+        merged_layer = layers.Dense(lgdp, name='GDP_Hidden')(merged_layer)
         merged_layer = layers.LeakyReLU()(merged_layer)
 
-    output = layers.Dense(1, activation='linear', name='GDP_Output')(merged_layer)
+    output = layers.Dense(1, activation='linear', name=gdp_out_name)(merged_layer)
 
     autoencoder = keras.models.Model(inputs=[input_numeric, input_time, input_gdp_prev, input_gas, input_petrol],
                                      outputs=[output, decoded])
 
-    # Specify loss functions and weights for each output
-    autoencoder.compile(loss={'GDP_Output': 'mean_squared_error', 'DecoderOut': 'mean_squared_error'},
-                        loss_weights={'GDP_Output': wg, 'DecoderOut': wd},
-                        optimizer=tf.keras.optimizers.RMSprop(lr=lr),
-                        metrics=['mean_absolute_error', 'mean_squared_error'])
     return autoencoder
+
+
+def compile_model(model, o1, o2, w1, w2, lr):
+    """
+    Compile a model.
+
+    :param o1:  Name of the first output
+    :param o2:  Name of the second output
+    :param w1:  Loss weight of the first output
+    :param w2:  Loss weight of the second output
+    :param lr:  Learning rate
+    """
+    # Specify loss functions and weights for each output
+    model.compile(loss={o1: 'mean_squared_error', o2: 'mean_squared_error'},
+                  loss_weights={o1: w1, o2: w2},
+                  optimizer=tf.keras.optimizers.RMSprop(lr=lr),
+                  metrics=['mean_absolute_error', 'mean_squared_error'])
+    return model
 
 
 def run_prediction(model, dset, dset_name, labs):
@@ -371,11 +433,11 @@ def get_args():
 
     # Loss function weights
     parser.add_argument('-wgdp', type=float,
-                        help='Weight to apply to the loss of the GDP output [default: 0.5]',
-                        default=0.5)
+                        help='Weight to apply to the loss of the GDP output [default: 0.0]',
+                        default=0.0)
     parser.add_argument('-wdec', type=float,
-                        help='Weight to apply to the loss of the decoder output [default: 0.5]',
-                        default=0.5)
+                        help='Weight to apply to the loss of the decoder output [default: 1.0]',
+                        default=1.0)
 
     # General model parameters
     parser.add_argument('-epochs', type=int, help='The number of epochs to train for', default=5000)
@@ -389,7 +451,7 @@ def get_args():
     return parser.parse_args()
 
 
-def run(args, diag_fname='gdp_results.csv'):
+def run(args, diag_fname='gdp_results_dec_separate.csv'):
     """
     Get hyperparams, load and standardize data, train and evaluate.
 
@@ -426,7 +488,7 @@ def run(args, diag_fname='gdp_results.csv'):
     results = train_model(train, dev, args, args.model, plots=False)
 
     # Record results
-    notes = ''
+    notes = 'Trying separate encoder from GDP'
     time_taken = int(time.time() - st)
     hpar_values = [v for k, v in vars(args).items()]
     diag_file.write(hpar_values, results, time_taken, notes)
