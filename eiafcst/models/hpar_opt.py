@@ -86,8 +86,8 @@ def optimize(n, repeat=3, out='gdp_results.csv'):
     r_w = np.arange(0, 1.01, 0.01)
 
     for i in range(n):
+        args = ArgBuilder(i, r_lr, r_Cn, r_Ck, r_Cf, r_L1, r_L2, r_lgdp, r_w)
         for j in range(repeat):
-            args = ArgBuilder(i, r_lr, r_Cn, r_Ck, r_Cf, r_L1, r_L2, r_lgdp, r_w)
             args.model = f'eiafcst/models/diagnostic/gdp/{out.split(".")[0]}_{i}-{j}.h5'
             run(args, out)
 
@@ -101,8 +101,15 @@ if __name__ == '__main__':
         raise "Please provide an integer for how many random searches to run."
 
     try:
-        out = sys.argv[2]
+        repeat = int(sys.argv[2])
+    except IndexError:
+        raise "Please provide how many times to repeat each search."
+    except ValueError:
+        raise "Please provide an integer for how many times to repeat each search."
+
+    try:
+        out = sys.argv[3]
     except IndexError:
         raise "Please provide an output file name."
 
-    optimize(n, out)
+    optimize(n, repeat, out)
