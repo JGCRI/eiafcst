@@ -155,7 +155,7 @@ def train_model(train, dev, hpars, save_best, plots=True):
 
     if plots:
         plot_history(history,
-                     cols=['DecoderOut_mean_absolute_error', 'val_DecoderOut_mean_absolute_error'],
+                     cols=[f'{dec_out_name}_mean_absolute_error', f'val_{dec_out_name}_mean_absolute_error'],
                      labs=['Train Decoder Error', 'Val Decoder Error', 'Train GDP Error', 'Val GDP Error'],
                      savefile='dec_train_history.png')
 
@@ -178,7 +178,7 @@ def train_model(train, dev, hpars, save_best, plots=True):
 
     if plots:
         plot_history(history,
-                     cols=['GDP_Output_mean_absolute_error', 'val_GDP_Output_mean_absolute_error'],
+                     cols=[f'{gdp_out_name}_mean_absolute_error', f'val_{gdp_out_name}_mean_absolute_error'],
                      labs=['Train Decoder Error', 'Val Decoder Error', 'Train GDP Error', 'Val GDP Error'],
                      savefile='gdp_train_history.png')
 
@@ -194,7 +194,7 @@ def train_model(train, dev, hpars, save_best, plots=True):
                                                                      dev['gas'], dev['petrol'], dev_labels),
                                            steps=len(dev['elec']))
 
-    # Metrics are specified in build_model
+    # Metrics are specified in compile_model
     dev_gdp_mae = dev_metrics[3]
     dev_dec_mae = dev_metrics[5]
 
@@ -336,7 +336,7 @@ def build_model(nhr, nreg, conv_layers, l1, l2, lgdp, gdp_out_name, dec_out_name
         i -= 1
         decoded = layers.UpSampling1D(param_set[2])(decoded)
         if i == 0:
-            decoded = layers.Conv1D(nreg, param_set[0], padding='same', activation='relu',
+            decoded = layers.Conv1D(nreg, param_set[0], padding='same', activation='linear',
                                     bias_initializer='glorot_uniform', name=dec_out_name)(decoded)
         else:
             decoded = layers.Conv1D(conv_params[i - 1][1], param_set[0], padding='same',
