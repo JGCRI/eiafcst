@@ -440,7 +440,7 @@ def get_args():
                         default=1.0)
 
     # General model parameters
-    parser.add_argument('-epochs', type=int, help='The number of epochs to train for', default=5000)
+    parser.add_argument('-epochs', type=int, help='The number of epochs to train for', default=8000)
     parser.add_argument('-patience', type=int,
                         help='How many epochs to continue training without improving dev accuracy (int) [default: 50]',
                         default=50)
@@ -466,8 +466,6 @@ def run(args, diag_fname='gdp_results_dec_separate.csv'):
     L1 - Hidden layer after convolutional layers
     L2 - Final encoded layer, represents features from electricity dataset
     lgdp - Hidden layer in GDP branch
-    wgdp - Weight given to GDP output
-    wdec - Weight given to decoder output
     epochs - Number of epochs before stopping
     patience - Number of epochs to stop after if no better result is found
     """

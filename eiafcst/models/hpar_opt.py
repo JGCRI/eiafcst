@@ -13,7 +13,7 @@ from eiafcst.models.model_gdp import run
 class ArgBuilder:
     """Generate a simple class containing random argument values."""
 
-    def __init__(self, id, r_lr, r_Cn, r_Ck, r_Cf, r_L1, r_L2, r_lgdp, r_w):
+    def __init__(self, id, r_lr, r_Cn, r_Ck, r_Cf, r_L1, r_L2, r_lgdp):
         """Randomly sample from input hyperparameter ranges."""
         self.lr = np.random.choice(r_lr)
 
@@ -23,11 +23,13 @@ class ArgBuilder:
         self.L2 = np.random.choice(r_L2)
         self.lgdp = np.random.choice(r_lgdp)
 
-        self.wgdp = np.random.choice(r_w)
-        self.wdec = 1 - self.wgdp
+        # We now train these two outputs separately
+        self.wgdp = 0
+        self.wdec = 1
 
-        self.epochs = 5000
+        self.epochs = 10000
         self.patience = [500, 300, 150, 50][int(np.log10(self.lr))]  # higher patience for lower learning rate
+        self.patience = 400
 
     @staticmethod
     def factors(n):
@@ -70,23 +72,20 @@ def optimize(n, repeat=3, out='gdp_results.csv'):
         L1 - Hidden layer after convolutional layers
         L2 - Final encoded layer, represents features from electricity dataset
         lgdp - Hidden layer in GDP branch
-        wgdp - Weight given to GDP output
-        wdec - Weight given to decoder output
     """
-    r_lr = np.array([0.001, 0.0001])
+    r_lr = np.array([0.0005])
 
     # ranges for the convolutional layers (n: how many, k: kernel size, f: filter size, p: pool size)
     r_Cn = np.arange(1, 3 + 1)
     r_Ck = np.arange(2, 48 + 1)
     r_Cf = np.arange(1, 24 + 1)
 
-    r_L1 = np.arange(2, 32 + 1)
-    r_L2 = np.arange(2, 16 + 1)
+    r_L1 = np.arange(1, 32 + 1)
+    r_L2 = np.arange(1, 16 + 1)
     r_lgdp = np.arange(0, 12 + 1)
-    r_w = np.arange(0, 1.01, 0.01)
 
     for i in range(n):
-        args = ArgBuilder(i, r_lr, r_Cn, r_Ck, r_Cf, r_L1, r_L2, r_lgdp, r_w)
+        args = ArgBuilder(i, r_lr, r_Cn, r_Ck, r_Cf, r_L1, r_L2, r_lgdp)
         for j in range(repeat):
             args.model = f'eiafcst/models/diagnostic/gdp/{out.split(".")[0]}_{i}-{j}.h5'
             run(args, out)
