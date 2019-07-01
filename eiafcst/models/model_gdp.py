@@ -129,7 +129,8 @@ def train_model(train, dev, hpars, save_best, plots=True):
     gdp_out_name = 'GDP_Output'
     dec_out_name = 'DecoderOut'
 
-    model = build_model(nhrweek, nregion, hpars.C, hpars.L1, hpars.L2, hpars.lgdp, gdp_out_name, dec_out_name)
+    model = build_model(nhrweek, nregion, hpars.C, hpars.L1, hpars.L2,
+                        hpars.lgdp1, hpars.lgdp2, gdp_out_name, dec_out_name)
 
     if plots:
         plot_model(model, to_file='gdp_model.png', show_shapes=True, show_layer_names=True)
@@ -140,7 +141,6 @@ def train_model(train, dev, hpars, save_best, plots=True):
     # Freeze GDP layers (just for efficiency)
     for i, layer in enumerate(model.layers):
         layer.trainable = not layer.name.startswith('GDP_')  # There's probably a better way to do this
-        print(i, layer.name, layer.trainable)
 
     model = compile_model(model, gdp_out_name, dec_out_name, 0.0, 1.0, hpars.lr)
     model.summary()
@@ -162,9 +162,8 @@ def train_model(train, dev, hpars, save_best, plots=True):
     # Freeze non-GDP layers
     for i, layer in enumerate(model.layers):
         layer.trainable = layer.name.startswith('GDP_')  # There's probably a better way to do this
-        print(i, layer.name, layer.trainable)
 
-    model = compile_model(model, gdp_out_name, dec_out_name, 1.0, 0.0, hpars.lr)
+    model = compile_model(model, gdp_out_name, dec_out_name, 1.0, 0.0, hpars.lr * 10)  # does better with higher lr
     model.summary()
 
     # Now do the GDP training
@@ -270,7 +269,7 @@ def parse_conv_layers(conv_layers):
     return conv_params
 
 
-def build_model(nhr, nreg, conv_layers, l1, l2, lgdp, gdp_out_name, dec_out_name):
+def build_model(nhr, nreg, conv_layers, l1, l2, lgdp1, lgdp2, gdp_out_name, dec_out_name):
     """
     Build the convolutional neural network.
 
@@ -356,11 +355,15 @@ def build_model(nhr, nreg, conv_layers, l1, l2, lgdp, gdp_out_name, dec_out_name
 
     # This is our actual output, the GDP prediction
     merged_layer = layers.Concatenate()([encoded, input_time, input_gdp_prev, input_gas, input_petrol])
-    if lgdp > 0:
-        merged_layer = layers.Dense(lgdp, name='GDP_Hidden')(merged_layer)
-        merged_layer = layers.LeakyReLU()(merged_layer)
 
-    output = layers.Dense(1, activation='linear', name=gdp_out_name)(merged_layer)
+    gdp_hidden_layer = layers.Dense(lgdp1, name='GDP_Hidden')(merged_layer)
+    gdp_hidden_layer = layers.LeakyReLU()(gdp_hidden_layer)
+    if lgdp2 > 0:
+        gdp_hidden_layer = layers.Dense(lgdp2, name='GDP_Hidden2',
+                                        kernel_regularizer=keras.regularizers.l1(0))(gdp_hidden_layer)
+        gdp_hidden_layer = layers.LeakyReLU()(gdp_hidden_layer)
+
+    output = layers.Dense(1, activation='linear', name=gdp_out_name)(gdp_hidden_layer)
 
     autoencoder = keras.models.Model(inputs=[input_numeric, input_time, input_gdp_prev, input_gas, input_petrol],
                                      outputs=[output, decoded])
@@ -426,10 +429,12 @@ def get_args():
     # Hidden layers parameters
     hl1_help = 'The number of units in the first hidden layer (int) [default: 16]'
     hl2_help = 'The number of units in the final encoding (int) [default: 8]'
-    hlg_help = 'The number of units in the hidden layer of the GDP branch (int) [default: 12]'
+    lgdp1_help = 'The number of units in the first hidden layer of the GDP branch (int) [default: 4]'
+    lgdp2_help = 'The number of units in the second hidden layer of the GDP branch (int) [default: 4]'
     parser.add_argument('-L1', type=int, help=hl1_help, default=16)
     parser.add_argument('-L2', type=int, help=hl2_help, default=8)
-    parser.add_argument('-lgdp', type=int, help=hlg_help, default=12)
+    parser.add_argument('-lgdp1', type=int, help=lgdp1_help, default=4)
+    parser.add_argument('-lgdp2', type=int, help=lgdp2_help, default=4)
 
     # Loss function weights
     parser.add_argument('-wgdp', type=float,
@@ -451,7 +456,7 @@ def get_args():
     return parser.parse_args()
 
 
-def run(args, diag_fname='gdp_results_dec_separate.csv'):
+def run(args, diag_fname='gdp_2hidden.csv'):
     """
     Get hyperparams, load and standardize data, train and evaluate.
 
@@ -465,7 +470,8 @@ def run(args, diag_fname='gdp_results_dec_separate.csv'):
     C - Convolutional layers
     L1 - Hidden layer after convolutional layers
     L2 - Final encoded layer, represents features from electricity dataset
-    lgdp - Hidden layer in GDP branch
+    lgdp1 - First hidden layer in GDP branch
+    lgdp2 - Second hidden layer in GDP branch
     epochs - Number of epochs before stopping
     patience - Number of epochs to stop after if no better result is found
     """
@@ -483,10 +489,10 @@ def run(args, diag_fname='gdp_results_dec_separate.csv'):
     train, dev = load_inputs(['train', 'dev'])
 
     # Run model
-    results = train_model(train, dev, args, args.model, plots=False)
+    results = train_model(train, dev, args, args.model, plots=True)
 
     # Record results
-    notes = 'Trying separate encoder from GDP'
+    notes = 'added second hidden layer'
     time_taken = int(time.time() - st)
     hpar_values = [v for k, v in vars(args).items()]
     diag_file.write(hpar_values, results, time_taken, notes)

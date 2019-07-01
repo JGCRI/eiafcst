@@ -28,7 +28,6 @@ class ArgBuilder:
         self.wdec = 1
 
         self.epochs = 10000
-        self.patience = [500, 300, 150, 50][int(np.log10(self.lr))]  # higher patience for lower learning rate
         self.patience = 400
 
     @staticmethod
@@ -73,19 +72,20 @@ def optimize(n, repeat=3, out='gdp_results.csv'):
         L2 - Final encoded layer, represents features from electricity dataset
         lgdp - Hidden layer in GDP branch
     """
-    r_lr = np.array([0.0005])
+    r_lr = np.array([0.001])
 
     # ranges for the convolutional layers (n: how many, k: kernel size, f: filter size, p: pool size)
     r_Cn = np.arange(1, 3 + 1)
     r_Ck = np.arange(2, 48 + 1)
     r_Cf = np.arange(1, 24 + 1)
 
-    r_L1 = np.arange(1, 32 + 1)
+    r_L1 = np.arange(1, 24 + 1)
     r_L2 = np.arange(1, 16 + 1)
-    r_lgdp = np.arange(0, 12 + 1)
+    r_lgdp1 = np.arange(1, 12 + 1)
+    r_lgdp2 = np.arange(0, 12 + 1)
 
     for i in range(n):
-        args = ArgBuilder(i, r_lr, r_Cn, r_Ck, r_Cf, r_L1, r_L2, r_lgdp)
+        args = ArgBuilder(i, r_lr, r_Cn, r_Ck, r_Cf, r_L1, r_L2, r_lgdp1, r_lgdp2)
         for j in range(repeat):
             args.model = f'eiafcst/models/diagnostic/gdp/{out.split(".")[0]}_{i}-{j}.h5'
             run(args, out)
