@@ -13,7 +13,7 @@ from eiafcst.models.model_gdp import run
 class ArgBuilder:
     """Generate a simple class containing random argument values."""
 
-    def __init__(self, id, r_lr, r_Cn, r_Ck, r_Cf, r_L1, r_L2, r_lgdp):
+    def __init__(self, id, r_lr, r_Cn, r_Ck, r_Cf, r_L1, r_L2, r_lgdp1, r_lgdp2):
         """Randomly sample from input hyperparameter ranges."""
         self.lr = np.random.choice(r_lr)
 
@@ -21,7 +21,8 @@ class ArgBuilder:
 
         self.L1 = np.random.choice(r_L1)
         self.L2 = np.random.choice(r_L2)
-        self.lgdp = np.random.choice(r_lgdp)
+        self.lgdp1 = np.random.choice(r_lgdp1)
+        self.lgdp2 = np.random.choice(r_lgdp2)
 
         # We now train these two outputs separately
         self.wgdp = 0
