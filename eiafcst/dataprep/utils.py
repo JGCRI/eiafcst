@@ -197,17 +197,17 @@ class DiagnosticFile:
         results_file.to_csv(self.fname, index=False, float_format='%.4f')
 
 
-def combine_elec_and_temperature(elec, temp):
+def combine_elec_and_temperature():
     """
     Prepare the dataset for modelling electric load from temperature.
 
-    Prerequisits are data created from
-        python eiafcst/main.py - e - fillfile eiafcst/data/random-forest-fill-values.csv ./
+    Prerequisites are data created from
+        python eiafcst/main.py -e -fillfile eiafcst/data/random-forest-fill-values.csv -outdir eiafcst/output
     and
-        python eiafcst/dataprep/temperature.py temperature_by_agg_region.csv eiafcst/data/spatial/Aggregate_Regions/Aggregate_Regions.shp
+        python eiafcst/dataprep/temperature.py eiafcst/output/temperature_by_agg_region.csv eiafcst/data/spatial/Aggregate_Regions/Aggregate_Regions.shp
     """
-    temp = pd.read_csv(resource_filename('eiafcst', '../temperature_by_agg_region.csv'))
-    load = pd.read_csv(resource_filename('eiafcst', '../load_by_agg_region_2006-2017.csv'))
+    temp = pd.read_csv(resource_filename('eiafcst', 'output/temperature_by_agg_region.csv'))
+    load = pd.read_csv(resource_filename('eiafcst', 'output/load_by_agg_region_2006-2017.csv'))
 
     assert all(load['NERC Region'].isin(temp.ID))
 
@@ -230,8 +230,8 @@ def combine_elec_and_temperature(elec, temp):
         data = pd.concat([data, pd.get_dummies(data['ID'])], axis=1)
         data = data.drop(columns='ID')
 
-    data.to_csv(resource_filename('eiafcst', '../load_and_temp_full.csv'), index=False)
-    data.to_pickle(resource_filename('eiafcst', '../load_and_temp_full.pkl'))
+    data.to_csv(resource_filename('eiafcst', 'output/load_and_temp_full.csv'), index=False)
+    data.to_pickle(resource_filename('eiafcst', 'output/load_and_temp_full.pkl'))
 
 
 def plot_history(history, xlab='Epoch', ylab='Mean Abs Error', cols=[], labs=[], savefile=None, ylim=1.0):

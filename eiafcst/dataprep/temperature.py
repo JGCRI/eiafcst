@@ -320,6 +320,9 @@ def main():
     out = pd.concat([usa_avg, hi_avg, ak_avg], sort=True)
     out = out.sort_values(['ID', 'time'])
 
+    # Add UTC indicator
+    out.loc[:, 'time'] = out['time'].dt.tz_localize('UTC')
+
     out_fname = args.outfile
     if not out_fname.endswith('.csv'):
         out_fname += '.csv'

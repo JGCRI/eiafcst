@@ -12,6 +12,7 @@ Caleb Braun
 """
 import os
 import time
+import glob
 import pandas as pd
 import numpy as np
 from pkg_resources import resource_filename
@@ -337,12 +338,12 @@ def map_eia_code(df, codemap):
     # Faster than merging
     mapping_dict = name_to_eia_code.pivot_table(['eia_code'], 'Abbreviated PCA Name', aggfunc='last')
     mapping_dict = mapping_dict.to_dict()['eia_code']
-    df['eia_code'] = df['Abbreviated PCA Name']
-    df['eia_code'] = df['eia_code'].map(mapping_dict)
+    df.loc[:, 'eia_code'] = df['Abbreviated PCA Name']
+    df.loc[:, 'eia_code'] = df['eia_code'].map(mapping_dict)
 
     # Can't do anything with NaN eia_codes
     df = df.loc[~pd.isnull(df['eia_code']), :]
-    df['eia_code'] = df['eia_code'].astype('int')
+    df.loc[:, 'eia_code'] = df['eia_code'].astype('int')
     df.reset_index(drop=True, inplace=True)
 
     return df
@@ -388,9 +389,7 @@ def load_snl(hdf_name, hdf_tbl, min_year):
 
 def build_electricity_dataset(min_year):
     """
-    Main function for creating the electricity dataset for modeling
-
-    Draws on many sources to be described here eventually.
+    Create the electricity dataset for modeling.
 
     The raw data(called `snl`, referring to the company that prepared it) has
     a few issues. Let's try to deal with some of them. Note that there are
@@ -399,7 +398,6 @@ def build_electricity_dataset(min_year):
     """
     maps = 'data/mapping_files'
     ferc = 'data/form714-database'
-    diag = 'data/diagnostics'
 
     timezone_map = resource_filename('eiafcst', f'{maps}/timezones.csv')
     eia_code_map = resource_filename('eiafcst', f'{maps}/ba_code_to_eia_id.csv')
@@ -437,8 +435,6 @@ def build_electricity_dataset(min_year):
 
     # Reset index to be sequential after all the additions and drops
     snl = snl.reset_index(drop=True)
-
-    snlbak = snl.copy()
 
     # Create the complete index with all date/BA combinations
     all_codes = snl.eia_code.unique()

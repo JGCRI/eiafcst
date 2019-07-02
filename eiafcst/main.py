@@ -1,14 +1,12 @@
 """
-Run the GDP prediction model.
+Run data preparation for the GDP prediction model.
 
 Caleb Braun
 3/19/19
 """
 from eiafcst.data.spatial import build_shapefile
 from eiafcst.dataprep import electricity
-from eiafcst.dataprep import temperature
 from eiafcst.dataprep.utils import add_quarter_and_week
-from eiafcst.models import model_gas
 
 import pandas as pd
 
@@ -24,25 +22,8 @@ def get_args():
     parser.add_argument("-outdir", type=str, help="Directory for data outputs", default="eiafcst/output")
     parser.add_argument("-e", action="store_true", help="Build electricity dataset")
     parser.add_argument("-f", action="store_true", help="Download input datasets, even if they already exist")
-    parser.add_argument("-g", action="store_true", help="Run gas model")
+    parser.add_argument("-s", action="store_true", help="Build the electricity regions shapefile")
     parser.add_argument("-fillfile", type=str, help="Replacement data for electricity dataset")
-    # parser.add_argument('-L1', type=int,
-    #                     help='The number of units in the first hidden layer (int) [default: 16]',
-    #                     default=16)
-    # parser.add_argument('-L2', type=int,
-    #                     help='The number of units in the first hidden layer (int) [default: 16]',
-    #                     default=16)
-    # parser.add_argument("-epochs", type=int,
-    #                     help="The number of epochs to train for", default=1000)
-    # parser.add_argument('-patience', type=int,
-    #                     help='How many epochs to continue training without improving dev accuracy (int) [default: 20]',
-    #                     default=20)
-    # parser.add_argument('-embedsize', type=int,
-    #                     help='How many dimensions the region embedding should have (int) [default: 5]',
-    #                     default=5)
-    # parser.add_argument('-model', type=str,
-    #                     help='Save the best model with this prefix (string) [default: /training_1/model.ckpt]',
-    #                     default=os.path.normpath('/training_1/model.ckpt'))
 
     return parser.parse_args()
 
@@ -70,7 +51,7 @@ def elec(outdir, diagdir, fill_file=None):
             df = pd.read_csv(sub_region_csv)
         except FileNotFoundError:
             build = True
-            df = electricity.build_electricity_dataset()
+            df = electricity.build_electricity_dataset(2006)
 
     if fill_file is None and not build:
         print("Complete dataset already found.")
@@ -80,7 +61,8 @@ def elec(outdir, diagdir, fill_file=None):
         # Filling is based on datetime, not year/quarter/week designation
         df = df.drop(columns=['EconYear', 'quarter', 'week'])
 
-    df = electricity.fill_simulated(df, fill_file)
+    if fill_file is not None:
+        df = electricity.fill_simulated(df, fill_file)
 
     # Aggregate to NERC region
     keys = ['NERC Region', 'Hourly Load Data As Of']
@@ -143,14 +125,8 @@ def main():
     """
     Generate all the data necessary to run the GDP model, then run it.
 
-    INCOMPLETE
-
-    The goal here is that someone who gets this package could just run this
-    function, and all the data files will be automatically generated. Then,
-    the GDP model can be run with the best default parameters from the
-    training process.
-
-    Arguments should just be flags on how far to run the system.
+    Run this function to automatically generate several data files.
+    Arguments are flags on how much of the system to run.
     """
     args = get_args()
 
@@ -167,22 +143,12 @@ def main():
     download_inputs(args.f)
 
     # Build the aggregate region shapefile
-    build_shapefile.main(spatial_dir)
+    if args.s:
+        build_shapefile.main(spatial_dir)
 
     # Process electricity data to correct years and aggregation level
     if args.e:
         elec_processed = elec(output_dir, diag_dir, args.fillfile)
-
-    # Aggregate gridded temperature data into regional hourly totals
-    temperature.main()  # DOES NOT WORK BECAUSE NEEDS ARGS
-
-    if args.g:
-        if not os.path.isfile('gas_hourly_by_state.csv'):
-            print('Preparing natural gas dataset...')
-            ngas = natural_gas.main()
-            ngas.to_csv('gas_hourly_by_state.csv', index=False)
-
-        model_gas.main()
 
 
 if __name__ == '__main__':

@@ -14,7 +14,7 @@ import argparse
 import time
 import os
 
-from eiafcst.dataprep.utils import *
+from eiafcst.dataprep.utils import PrintDot, read_training_data, DiagnosticFile
 
 import tensorflow as tf
 from tensorflow import keras
@@ -209,7 +209,7 @@ def build_model(l1, l2, lr, embed_in_dim, embed_out_dim):
     merged_layer = layers.Concatenate()([input_num, embed_layer])
     output = layers.Dense(l1, activation=tf.keras.activations.relu)(merged_layer)
     output = layers.Dense(l2, activation=tf.keras.activations.relu)(output)
-    output = layers.Dense(1, bias_initializer=tf.keras.initializers.constant(4.0))(output)
+    output = layers.Dense(1, activation='linear', bias_initializer=tf.keras.initializers.glorot_uniform)(output)
 
     model = keras.models.Model(inputs=[input_num, input_cat], outputs=[output])
 
@@ -413,6 +413,9 @@ def main():
     """Get hyperparams, load and standardize data, train and evaluate."""
     st = time.time()
 
+    # avoid clutter from old models / layers
+    keras.backend.clear_session()
+
     # Hyperparameters passed in via command line
     args = get_args()
     args_dict = vars(args)
@@ -429,8 +432,7 @@ def main():
     # Set up diagnostics
     hyperparams = [k for k in args_dict.keys()]
     res_metrics = ['mae', 'mse', 'mean train residual', 'mean test residual']
-    diag_headers = hyperparams + res_metrics + ['notes']
-    diag_fname = diagnostic_file('elec_results.csv', diag_headers)
+    diag_file = DiagnosticFile('elec_results.csv', hyperparams, res_metrics)
 
     notes = ''
 
@@ -439,11 +441,9 @@ def main():
                   args.model, args.embedsize, args.seed, args.sample_size, plots=True)
 
     # Record results
-    with open(diag_fname, 'a') as outfile:
-        hyper_values = [str(v) for k, v in args_dict.items()]
-        diag_results = [str(r) for r in results]
-        diag_values = ','.join(hyper_values + diag_results + [notes + '\n'])
-        outfile.write(diag_values)
+    time_taken = int(time.time() - st)
+    hpar_values = [v for k, v in vars(args).items()]
+    diag_file.write(hpar_values, results, time_taken, notes)
 
     print(f'Done in {time.time() - st} seconds.')
 
