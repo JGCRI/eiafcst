@@ -1,6 +1,9 @@
-To replicate the modeling process, follow these steps:
+Steps for running the GDP model from scratch
+Caleb Braun
+07/03/19
 
-First, install these packages (for working with spatial data):
+To replicate the modeling process, first install these packages (required for
+working with spatial data):
  - rasterio
  - xarray
  - descartes
@@ -8,6 +11,8 @@ First, install these packages (for working with spatial data):
  - pytables
  - dask
  - toolz
+
+Next, follow these steps:
 
 1. Download all datasets described in the eiafcst/data/ subfolders
 
@@ -29,6 +34,15 @@ First, install these packages (for working with spatial data):
 6. Combine the temperature and electricity data:
     python -c 'from eiafcst.dataprep.utils import combine_elec_and_temperature; combine_elec_and_temperature()'
 
-7. Run the electricity model
+7. Train the electricity model (model_electricity.py)
 
-8. Use the electricity residuals as inputs to the GDP model
+8. Generate electricity residuals from the trained model:
+    python eiafcst/models/model_electricity.py -sample_size -1 -load -model eiafcst/models/electricity/elec_model.h5 eiafcst/output/load_and_temp_full.pkl
+
+9. Build the GDP model inputs:
+    python eiafcst/dataprep/build_inputs.py
+
+10. Train and evaluate the GDP model (model_gdp.py)
+
+11. A trained model can be evaluated and used to make predictions with the
+    script eiafcst/models/diagnostic/plot_model_predictions.py

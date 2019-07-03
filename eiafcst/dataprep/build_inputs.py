@@ -123,7 +123,7 @@ def main():
     """
     # TODO: Move these constants to a global package configuration file
     MODEL_INPUT_DIR = resource_filename('eiafcst', os.path.join('models', 'gdp'))
-    ELEC_RESID_PATH = resource_filename('eiafcst', os.path.join('models', 'electricity', 'elec_model5_residuals.csv'))
+    ELEC_RESID_PATH = resource_filename('eiafcst', os.path.join('models', 'electricity', 'elec_model_residuals.csv'))
     GDP_LABELS_PATH = resource_filename('eiafcst', os.path.join('data', 'raw_data', 'NQGDP_2002-2018_NSA.csv'))
 
     RNG_SEED = 42
