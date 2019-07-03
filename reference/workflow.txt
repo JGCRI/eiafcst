@@ -1,5 +1,13 @@
 To replicate the modeling process, follow these steps:
 
+First, install these packages (for working with spatial data):
+ - rasterio
+ - xarray
+ - descartes
+ - geopandas
+ - pytables
+ - dask
+ - toolz
 
 1. Download all datasets described in the eiafcst/data/ subfolders
 

@@ -115,7 +115,12 @@ def run(data_file, learning_rate, l1, l2, epochs, patience, savefile,
     # Build and show the model
     model = build_model(l1, l2, learning_rate, len(category_names), embedding_size)
     model.summary()
-    plot_model(model)
+
+    try:
+        import pydot
+        plot_model(model)
+    except ModuleNotFoundError:
+        print("Model cannot be plotted without module 'pydot'")
 
     # The patience parameter is the amount of epochs to check for improvement
     early_stop = keras.callbacks.EarlyStopping(monitor='val_loss', patience=patience, restore_best_weights=True)
