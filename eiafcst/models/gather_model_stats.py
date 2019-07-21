@@ -178,6 +178,9 @@ if __name__ == '__main__':
     sys.stdout.write('\n')
 
     for filename in filenames:
+        sys.stderr.write(filename)
+        sys.stderr.write('\n')
+        sys.stderr.flush()
         sys.stdout.write(model_stats(filename))
 
 
