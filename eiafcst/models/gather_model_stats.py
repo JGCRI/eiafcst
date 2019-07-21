@@ -11,7 +11,7 @@ import sys
 import os
 
 from eiafcst.models.model_gdp import load_inputs
-import plot_model_predictions as predict
+import eiafcst.models.diagnostic.plot_model_predictions as predict
 
 ## Maximum number of convolutional layer parameter sets to output
 MAXCONV = 5
