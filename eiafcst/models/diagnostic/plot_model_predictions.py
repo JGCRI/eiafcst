@@ -24,7 +24,7 @@ def run_prediction(model, full_data):
     """
     Get predictions from the model with known results.
 
-    Returns the predictions and the residuals (predicted - actual).
+    Returns GDP predictions and autoencoder predictions.
     """
     dsize = len(full_data['elec'])
     preds = np.empty(dsize)
