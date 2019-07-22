@@ -50,13 +50,16 @@ def run_prediction(model, full_data):
     return preds, pdecs
 
 
-def combine_model_inputs(varname, full_data_order, train, dev=None):
+def combine_model_inputs(varname, full_data_order, train, dev=None, test=None):
     """Combine the inputs, putting them in correct time order."""
     full_var = []
     for v in train[varname]:
         full_var.append(v)
     if dev is not None:
         for v in dev[varname]:
+            full_var.append(v)
+    if test is not None:
+        for v in test[varname]:
             full_var.append(v)
 
     full_var = np.array(full_var)
@@ -155,7 +158,7 @@ def main():
 
     # Plot full time series predicted v true
     preds, decoder = run_prediction(model, full_data)
-    plot_pred_v_true(preds, full_data, c1, c2, 0, out, 'test', 'Full ')
+    plot_pred_v_true(preds, full_data, c1, c2, 0, out, prefix, 'Full ')
 
     # Plot the decoder predictions
     outf = os.path.join(out, f'{prefix}_decoder_predictions.png')
