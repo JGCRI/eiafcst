@@ -15,6 +15,7 @@ import eiafcst.models.diagnostic.plot_model_predictions as predict
 
 ## Maximum number of convolutional layer parameter sets to output
 MAXCONV = 5
+DENSE_LAYER_NAMES = ['dense', 'FinalEncoding', 'GDP_Hidden', 'GDP_Hidden2']
 
 def load_model_data(modelfile):
     """Load a saved model and pull some basic information
@@ -63,7 +64,7 @@ def gather_model_config(modelstruct):
     nconv = len(convlayer_cfgs)
 
     ## Extract the width of the following dense layers
-    dense_names = ['dense', 'FinalEncoding', 'GDP_Hidden', 'GDP_Hidden2']
+    dense_names = DENSE_LAYER_NAMES
     dense_widths = [get_dl_width(name, layer_names, layers) for name in dense_names]
 
     return (nconv, convlayer_cfgs, dense_widths)
@@ -99,7 +100,7 @@ def get_dl_width(name, names, layers):
 
     This subroutine assumes the names are unique.
     """
-    idx = [i for (i, val) in enumerate(names)]
+    idx = [i for (i, val) in enumerate(names) if val == name]
     if len(idx) == 0:
         return 'NA'
     else:
@@ -137,9 +138,9 @@ def get_performance(model, dataset):
     
     return np.sqrt(meansqrresid)
 
-def convparm2str(convparm):
-    """Convert convolutional layer plans to a comma separated string"""
-    return ', '.join([str(x) for x in convparm])
+def parm2str(parmlist):
+    """Convert layer parameters to a comma separated string"""
+    return ', '.join([str(x) for x in parmlist])
 
 
 def model_stats(filename):
@@ -162,9 +163,10 @@ def model_stats(filename):
     for i in range(nconv, MAXCONV):
         convparm.append(['NA', 'NA', 'NA'])
 
-    allconvparms = ', '.join([convparm2str(parms) for parms in convparm])
+    alldenseparms = parm2str(dlparm)
+    allconvparms = ', '.join([parm2str(parms) for parms in convparm])
 
-    return f'{runid}, {perf_train}, {perf_dev}, {perf_test}, {nconv}, {allconvparms}\n'
+    return f'{runid}, {perf_train}, {perf_dev}, {perf_test}, {nconv}, {alldenseparms}, {allconvparms}\n'
 
 
 if __name__ == '__main__':
@@ -172,7 +174,8 @@ if __name__ == '__main__':
     filenames = sys.argv[1:]
 
     ## Write to stdout; redirect to go to file.
-    sys.stdout.write('runid, perf_train, perf_dev, perf_test, nconv')
+    sys.stdout.write('runid, perf_train, perf_dev, perf_test, nconv, ')
+    sys.stdout.write(', '.join(DENSE_LAYER_NAMES))
     for i in range(1, MAXCONV+1):
         sys.stdout.write(f', width{i}, nfilt{i}, npool{i}')
     sys.stdout.write('\n')
