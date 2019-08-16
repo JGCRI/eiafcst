@@ -77,6 +77,7 @@ def batch_generator(ele_residuals, timestep, gdp_prev, gas_arr,
     number of weeks (although this number is variable in each batch) and can
     be represented in a 3d numpy array.
     """
+    input_switch_complement = 1-input_switch
     i = 0
     while True:
         # print(f'Input length: {len(elec_residuals)}\tBATCH #{i % len(elec_residuals)}')
@@ -89,7 +90,8 @@ def batch_generator(ele_residuals, timestep, gdp_prev, gas_arr,
         gdp = np.repeat(gdp_prev[i], nwk)
         labs = np.repeat(labels[i], nwk)
 
-        yield ([ele, ts, gdp, gas, pet, input_switch, encoder_arr], [labs, ele])
+        yield ([ele, ts, gdp, gas, pet, input_switch,
+                input_switch_complement, encoder_arr], [labs, ele])
         i = (i + 1) % len(ele_residuals)
 
 
@@ -131,6 +133,7 @@ def train_model(train, dev, hpars, save_best, plots=True):
     ## is equal to hpars.L2; its values are arbitrary, since the
     ## input_switch will mask it out.
     input_switch = np.zeros(1)
+    input_switch_complement = np.ones(1)
     input_encoder = np.zeros(hpars.L2)
     
     # Batches are not all equally sized, so they need to be generated on the fly
@@ -327,6 +330,7 @@ def build_model(nhr, nreg, conv_layers, l1, l2, lgdp1, lgdp2, gdp_out_name, dec_
     ## zero.  0 means normal operation; 1 means we use a specified
     ## input for the encoding.
     input_switch = layers.Input(shape=(1,), name='EncoderSwitch')
+    input_switch_complement = layers.Input(shape=(1,), name='EncoderSwitchComplement')
     encoder_input = layers.Input(shape=(l2,), name='EncoderInput') # ignored if input_switch == 0.
 
     # The convolutional layers need input tensors with the shape (batch, steps, channels).
@@ -360,10 +364,10 @@ def build_model(nhr, nreg, conv_layers, l1, l2, lgdp1, lgdp2, gdp_out_name, dec_
     encoded = layers.LeakyReLU()(encoded)
 
     ## Implement the input switch (see above).
-    def oneminus(tensor):
-        one = keras.backend.ones(shape=(1,))
-        return layers.subtract([one, tensor])
-    input_switch_complement = layers.Lambda(oneminus)(input_switch)
+    # def oneminus(tensor):
+    #     one = keras.backend.ones(shape=(1,))
+    #     return layers.subtract([one, tensor])
+    # input_switch_complement = layers.Lambda(oneminus)(input_switch)
     ##input_switch_complement = layers.Subtract()([one, input_switch])
     
     encoded = layers.Multiply()([encoded,input_switch_complement])
@@ -441,10 +445,12 @@ def run_prediction(model, dset, dset_name, labs, normal_mode=True):
     encoder_input_shape[0] = len(dset['elec'])
     if normal_mode:
         input_switch = np.zeros(len(dset['elec']))
+        input_switch_complement = np.ones(len(dset['elec']))
         encoder_input = np.zeros(encoder_input_shape)
         print(f'Predicting GDP with {dset_name} data')
     else:
         input_switch = np.ones(len(dset['elec']))
+        input_switch_complement = np.zeros(len(dset['elec']))
         print(f'Running encoding interpretability tests')
         encoder_input = np.zeros(encoder_input_shape)
         nrow = len(dset['elec'])
@@ -466,7 +472,8 @@ def run_prediction(model, dset, dset_name, labs, normal_mode=True):
         ts = np.arange(dset['time'][i], dset['time'][i] + 1, 1 / nwk)
         gdp_prev = np.repeat(dset['gdp_prev'][i], nwk)
 
-        preds = model.predict([ele, ts, gdp_prev, gas, pet, input_switch, enc_input], batch_size=1)
+        preds = model.predict([ele, ts, gdp_prev, gas, pet,
+                               input_switch, input_switch_complement, enc_input], batch_size=1)
         pred = preds[0]
         pred = unstandardize(dset['gdp'], pred.mean()).round(6)
         decoder_outs[i] = preds[1]
