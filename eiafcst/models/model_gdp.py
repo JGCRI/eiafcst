@@ -405,7 +405,9 @@ def build_model(nhr, nreg, conv_layers, l1, l2, lgdp1, lgdp2, gdp_out_name, dec_
 
     output = layers.Dense(1, activation='linear', name=gdp_out_name)(gdp_hidden_layer)
 
-    autoencoder = keras.models.Model(inputs=[input_numeric, input_time, input_gdp_prev, input_gas, input_petrol],
+    autoencoder = keras.models.Model(inputs=[input_numeric,
+                                             input_time, input_gdp_prev, input_gas, input_petrol,
+                                             input_switch, input_switch_complement, encoder_input],
                                      outputs=[output, decoded])
 
     return autoencoder
