@@ -371,8 +371,8 @@ def build_model(nhr, nreg, conv_layers, l1, l2, lgdp1, lgdp2, gdp_out_name, dec_
     ##input_switch_complement = layers.Subtract()([one, input_switch])
     
     encoded = layers.Multiply()([encoded,input_switch_complement])
-    encoder_input = layers.Multiply()([encoder_input, input_switch])
-    encoded = layers.Add(name='SwitchedEncoding')([encoded, encoder_input])
+    enc_in = layers.Multiply()([encoder_input, input_switch])
+    encoded = layers.Add(name='SwitchedEncoding')([encoded, enc_in])
     
     # At this point, the representation is the most encoded and small; now let's build the decoder
     decoded = layers.Dense(l1, bias_initializer='glorot_uniform')(encoded)
