@@ -27,6 +27,13 @@ from tensorflow import keras
 from tensorflow.keras import layers
 from tensorflow.keras.utils import plot_model
 
+def get_layer_by_name(model, name):
+    """Get the layer with a certain name from a model."""
+    layers = model.layers
+    names = [l.name for l in layers]
+    idx = [i for (i,val) in enumerate(names) if val==name]
+    return layers[idx[0]]
+
 
 def unstandardize(gdp_orig, val):
     """Convert standardized GDP to dollar values."""
@@ -430,7 +437,7 @@ def run_prediction(model, dset, dset_name, labs, normal_mode=True):
     predictions = np.empty(len(dset['elec']))
     residuals = np.empty(len(dset['elec']))
     decoder_outs = np.empty(dset['elec'].shape)
-    encoder_input_shape = model.get_layer(name='EncoderSwitch').input_shape
+    encoder_input_shape = get_layer_by_name(model,'EncoderInput').input_shape
     encoder_input_shape[0] = len(dset['elec'])
     if normal_mode:
         input_switch = np.zeros(len(dset['elec']))
