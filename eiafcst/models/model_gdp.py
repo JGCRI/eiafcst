@@ -353,16 +353,12 @@ def build_model(nhr, nreg, conv_layers, l1, l2, lgdp1, lgdp2, gdp_out_name, dec_
     encoded = layers.LeakyReLU()(encoded)
 
     ## Implement the input switch (see above).
-    def iswitch(input_switch, encoder_in, encoder_out):
-        one = keras.backend.ones(shape=(1,))
-        input_switch_complement = layers.subtract([one, input_switch])
-        
-        encoder_out = layers.multiply([encoder_out,input_switch_complement])
-        encoder_in = layers.multiply([encoder_in, input_switch])
-        encoded_out = layers.add([encoder_out, encoder_in], name='SwitchedEncoding')
-
-    encoded = layers.Lambda(iswitch)(input_switch, encoder_input, encoded) 
-        
+    one = keras.backend.ones(shape=(1,))
+    input_switch_complement = layers.Subtract()([one, input_switch])
+    
+    encoded = layers.Multiply()([encoded,input_switch_complement])
+    encoder_input = layers.Multiply()([encoder_input, input_switch])
+    encoded = layers.Add(name='SwitchedEncoding')([encoded, encoder_input])
     
     # At this point, the representation is the most encoded and small; now let's build the decoder
     decoded = layers.Dense(l1, bias_initializer='glorot_uniform')(encoded)
