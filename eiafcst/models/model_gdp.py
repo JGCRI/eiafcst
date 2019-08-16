@@ -353,8 +353,11 @@ def build_model(nhr, nreg, conv_layers, l1, l2, lgdp1, lgdp2, gdp_out_name, dec_
     encoded = layers.LeakyReLU()(encoded)
 
     ## Implement the input switch (see above).
-    one = keras.backend.ones(shape=(1,))
-    input_switch_complement = layers.Subtract()([one, input_switch])
+    def oneminus(tensor):
+        one = keras.backend.ones(shape=(1,))
+        return layers.subtract([one, tensor])
+    input_switch_complement = layers.Lambda(oneminus)(input_switch)
+    ##input_switch_complement = layers.Subtract()([one, input_switch])
     
     encoded = layers.Multiply()([encoded,input_switch_complement])
     encoder_input = layers.Multiply()([encoder_input, input_switch])
