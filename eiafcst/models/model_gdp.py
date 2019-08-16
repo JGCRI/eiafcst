@@ -56,7 +56,8 @@ def load_inputs(dsets):
     return inputs
 
 
-def batch_generator(ele_residuals, timestep, gdp_prev, gas_arr, pet_arr, labels):
+def batch_generator(ele_residuals, timestep, gdp_prev, gas_arr,
+                    pet_arr, input_switch, encoder_arr, labels):
     """
     Generate a batch for training or evaluating the model.
 
@@ -81,7 +82,7 @@ def batch_generator(ele_residuals, timestep, gdp_prev, gas_arr, pet_arr, labels)
         gdp = np.repeat(gdp_prev[i], nwk)
         labs = np.repeat(labels[i], nwk)
 
-        yield ([ele, ts, gdp, gas, pet], [labs, ele])
+        yield ([ele, ts, gdp, gas, pet, input_switch, encoder_arr], [labs, ele])
         i = (i + 1) % len(ele_residuals)
 
 
@@ -118,10 +119,20 @@ def train_model(train, dev, hpars, save_best, plots=True):
                                                patience=hpars.patience,
                                                restore_best_weights=True)   # Important for keeping best model
 
+    ## Set up the fixed encoder inputs.  We are training here, so we
+    ## will want input_switch == 0.  The width of the encoder inputs
+    ## is equal to hpars.L2; its values are arbitrary, since the
+    ## input_switch will mask it out.
+    input_switch = np.zeros(1)
+    input_encoder = np.zeros(hpars.L2)
+    
     # Batches are not all equally sized, so they need to be generated on the fly
     train_generator = batch_generator(train['elec'], train['time'], train['gdp_prev'],
-                                      train['gas'], train['petrol'], train_labels)
-    dev_generator = batch_generator(dev['elec'], dev['time'], dev['gdp_prev'], dev['gas'], dev['petrol'], dev_labels)
+                                      train['gas'], train['petrol'],
+                                      input_switch, input_encoder, train_labels)
+    dev_generator = batch_generator(dev['elec'], dev['time'], dev['gdp_prev'],
+                                    dev['gas'], dev['petrol'],
+                                    input_switch, input_encoder, dev_labels)
 
     # -----------------------------------------------------------------------
     # Build the model
@@ -189,9 +200,8 @@ def train_model(train, dev, hpars, save_best, plots=True):
     # -----------------------------------------------------------------------
 
     # Evaluate the model on our validation set
-    dev_metrics = model.evaluate_generator(generator=batch_generator(dev['elec'], dev['time'], dev['gdp_prev'],
-                                                                     dev['gas'], dev['petrol'], dev_labels),
-                                           steps=len(dev['elec']))
+    
+    dev_metrics = model.evaluate_generator(generator=dev_generator, steps=len(dev['elec']))
 
     # Metrics are specified in compile_model
     dev_gdp_mae = dev_metrics[3]
@@ -293,6 +303,25 @@ def build_model(nhr, nreg, conv_layers, l1, l2, lgdp1, lgdp2, gdp_out_name, dec_
     # Weekly timeseries input
     input_numeric = layers.Input(shape=(nhr, nreg), name='HourlyElectricity')
 
+    # Time since start input (for dealing with energy efficiency changes)
+    input_time = layers.Input(shape=(1,), name='TimeSinceStart')
+
+    # Previous quarter's GDP
+    input_gdp_prev = layers.Input(shape=(1,), name='GDPPrev')
+
+    # Natural gas data at a weekly level
+    input_gas = layers.Input(shape=(1,), name='NaturalGas')
+
+    # Petroleum data at a weekly level
+    input_petrol = layers.Input(shape=(1,), name='Petroleum')
+
+    ## Add a way to specify specific encodings to investigate what the
+    ## encoder is responding to.  The following scalar is either 1 or
+    ## zero.  0 means normal operation; 1 means we use a specified
+    ## input for the encoding.
+    input_switch = layers.Input(shape=(1,), name='EncoderSwitch')
+    encoder_input = layers.Input(shape=(l2,), name='EncoderInput') # ignored if input_switch == 0.
+
     # The convolutional layers need input tensors with the shape (batch, steps, channels).
     # A convolutional layer is 1D in that it slides through the data length-wise,
     # moving along just one dimension.
@@ -323,6 +352,18 @@ def build_model(nhr, nreg, conv_layers, l1, l2, lgdp1, lgdp2, gdp_out_name, dec_
     encoded = layers.Dense(l2, bias_initializer='glorot_uniform', name='FinalEncoding')(encoded)
     encoded = layers.LeakyReLU()(encoded)
 
+    ## Implement the input switch (see above).
+    def iswitch(input_switch, encoder_in, encoder_out):
+        one = keras.backend.ones(shape=(1,))
+        input_switch_complement = layers.subtract([one, input_switch])
+        
+        encoder_out = layers.multiply([encoder_out,input_switch_complement])
+        encoder_in = layers.multiply([encoder_in, input_switch])
+        encoded_out = layers.add([encoder_out, encoder_in], name='SwitchedEncoding')
+
+    encoded = layers.Lambda(iswitch)(input_switch, encoder_input, encoded) 
+        
+    
     # At this point, the representation is the most encoded and small; now let's build the decoder
     decoded = layers.Dense(l1, bias_initializer='glorot_uniform')(encoded)
     decoded = layers.LeakyReLU()(decoded)
@@ -341,17 +382,6 @@ def build_model(nhr, nreg, conv_layers, l1, l2, lgdp1, lgdp2, gdp_out_name, dec_
             decoded = layers.Conv1D(conv_params[i - 1][1], param_set[0], padding='same',
                                     activation='relu', bias_initializer='glorot_uniform')(decoded)
 
-    # Time since start input (for dealing with energy efficiency changes)
-    input_time = layers.Input(shape=(1,), name='TimeSinceStart')
-
-    # Previous quarter's GDP
-    input_gdp_prev = layers.Input(shape=(1,), name='GDPPrev')
-
-    # Natural gas data at a weekly level
-    input_gas = layers.Input(shape=(1,), name='NaturalGas')
-
-    # Petroleum data at a weekly level
-    input_petrol = layers.Input(shape=(1,), name='Petroleum')
 
     # This is our actual output, the GDP prediction
     merged_layer = layers.Concatenate()([encoded, input_time, input_gdp_prev, input_gas, input_petrol])
@@ -389,26 +419,51 @@ def compile_model(model, o1, o2, w1, w2, lr):
     return model
 
 
-def run_prediction(model, dset, dset_name, labs):
+def run_prediction(model, dset, dset_name, labs, normal_mode=True):
     """
     Get predictions from the model with known results.
 
     Returns the predictions and the residuals (predicted - actual).
+
+    If normal mode is True, run electricity inputs through the
+    encoder; if false, submit a specified encoding.
     """
     predictions = np.empty(len(dset['elec']))
     residuals = np.empty(len(dset['elec']))
-    print(f'Predicting GDP with {dset_name} data')
+    decoder_outs = np.empty(dset['elec'].shape)
+    encoder_input_shape = model.get_layer(name='EncoderSwitch').input_shape
+    encoder_input_shape[0] = len(dset['elec'])
+    if normal_mode:
+        input_switch = np.zeros(len(dset['elec']))
+        encoder_input = np.zeros(encoder_input_shape)
+        print(f'Predicting GDP with {dset_name} data')
+    else:
+        input_switch = np.ones(len(dset['elec']))
+        print(f'Running encoding interpretability tests')
+        encoder_input = np.zeros(encoder_input_shape)
+        nrow = len(dset['elec'])
+        for i in range(nrow):
+            ncol = encoder_input_shape[1]
+            idx1 = i % ncol
+            idx2 = int(i/ncol)
+            row = np.zeros(ncol)
+            row[idx1,:] = idx2
+            
+        
     for i in range(len(dset['elec'])):
         ele = dset['elec'][i]
         gas = dset['gas'][i]
         pet = dset['petrol'][i]
+        enc_input = encoder_input[i]
 
         nwk = ele.shape[0]
         ts = np.arange(dset['time'][i], dset['time'][i] + 1, 1 / nwk)
         gdp_prev = np.repeat(dset['gdp_prev'][i], nwk)
 
-        pred = model.predict([ele, ts, gdp_prev, gas, pet], batch_size=1)[0]
+        preds = model.predict([ele, ts, gdp_prev, gas, pet, input_switch, enc_input], batch_size=1)
+        pred = preds[0]
         pred = unstandardize(dset['gdp'], pred.mean()).round(6)
+        decoder_outs[i] = preds[1]
         predictions[i] = pred
         residuals[i] = pred - unstandardize(dset['gdp'], labs[i])
         print(f'Predicted: ${pred}\tActual: ${unstandardize(dset["gdp"], labs[i])}')
