@@ -81,6 +81,7 @@ def batch_generator(ele_residuals, timestep, gdp_prev, gas_arr,
     i = 0
     while True:
         # print(f'Input length: {len(elec_residuals)}\tBATCH #{i % len(elec_residuals)}')
+        print(f'enc inputs:\ninput switch: {input_switch}\ninput switch complement {input_switch_complement}\nencoder input: {encoder_arr}')
         ele = ele_residuals[i]
         gas = gas_arr[i]
         pet = pet_arr[i]
