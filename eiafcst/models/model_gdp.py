@@ -81,7 +81,8 @@ def batch_generator(ele_residuals, timestep, gdp_prev, gas_arr,
     i = 0
     while True:
         # print(f'Input length: {len(elec_residuals)}\tBATCH #{i % len(elec_residuals)}')
-        print(f'enc inputs:\ninput switch: {input_switch}\ninput switch complement {input_switch_complement}\nencoder input: {encoder_arr}')
+        # print(f'enc inputs:\ninput switch: {input_switch}\ninput switch complement {input_switch_complement}\nencoder input: {encoder_arr}')
+        # print(f'data inputs:\nelec: {ele_residuals.shape}\n')
         ele = ele_residuals[i]
         gas = gas_arr[i]
         pet = pet_arr[i]
@@ -91,8 +92,11 @@ def batch_generator(ele_residuals, timestep, gdp_prev, gas_arr,
         gdp = np.repeat(gdp_prev[i], nwk)
         labs = np.repeat(labels[i], nwk)
 
-        yield ([ele, ts, gdp, gas, pet, input_switch,
-                input_switch_complement, encoder_arr], [labs, ele])
+        isw = np.repeat(input_switch, nwk, axis=0)
+        isc = np.repeat(input_switch_complement, nwk, axis=0)
+        eca = np.repeat(encoder_arr, nwk, axis=0)
+
+        yield ([ele, ts, gdp, gas, pet, isw, isc, eca], [labs, ele])
         i = (i + 1) % len(ele_residuals)
 
 
@@ -135,7 +139,7 @@ def train_model(train, dev, hpars, save_best, plots=True):
     ## input_switch will mask it out.
     input_switch = np.zeros(1)
     input_switch_complement = np.ones(1)
-    input_encoder = np.zeros(hpars.L2)
+    input_encoder = np.zeros((1,hpars.L2))
     
     # Batches are not all equally sized, so they need to be generated on the fly
     train_generator = batch_generator(train['elec'], train['time'], train['gdp_prev'],
@@ -443,26 +447,37 @@ def run_prediction(model, dset, dset_name, labs, normal_mode=True):
     """
     predictions = np.empty(len(dset['elec']))
     residuals = np.empty(len(dset['elec']))
-    decoder_outs = np.empty(dset['elec'].shape)
-    encoder_input_shape = get_layer_by_name(model,'EncoderInput').input_shape
-    encoder_input_shape[0] = len(dset['elec'])
+    decoder_outs = [None]*len(dset['elec'])
+    encoder_input_shape = list(get_layer_by_name(model,'EncoderInput').input_shape)
+    
+    print(f'encoder input length:  {len(dset["elec"])}')
+    print(f'encoder input shape: {encoder_input_shape}')    
+
+    encoder_input_shape[0] = 1
+
     if normal_mode:
-        input_switch = np.zeros(len(dset['elec']))
-        input_switch_complement = np.ones(len(dset['elec']))
-        encoder_input = np.zeros(encoder_input_shape)
+        input_switch = np.zeros(1)
+        input_switch_complement = np.ones(1)
+        encoder_input = [np.zeros(encoder_input_shape)]*len(dset['elec'])
         print(f'Predicting GDP with {dset_name} data')
     else:
-        input_switch = np.ones(len(dset['elec']))
-        input_switch_complement = np.zeros(len(dset['elec']))
+        input_switch = np.ones(1)
+        input_switch_complement = np.zeros(1)
+        encoder_input = [None] * len(dset['elec'])
         print(f'Running encoding interpretability tests')
-        encoder_input = np.zeros(encoder_input_shape)
         nrow = len(dset['elec'])
+        ncol = encoder_input_shape[1]
         for i in range(nrow):
-            ncol = encoder_input_shape[1]
-            idx1 = i % ncol
-            idx2 = int(i/ncol)
-            row = np.zeros(ncol)
-            row[idx1,:] = idx2
+            encoder_input[i] = np.zeros(encoder_input_shape)
+            if i>0:
+                j = i-1
+                idx1 = j % ncol
+                idx2 = int(j/ncol)
+                val = int(idx2/2) + 1
+                sign = 1 if idx2 % 2 == 0 else -1
+                encoder_input[i][:,idx1] = sign * val
+            #print(f'i: {i}  ncol: {ncol}  idx1: {idx1}  idx2: {idx2}')
+            print(f'encoder input {i}:\n{encoder_input[i]}')
             
         
     for i in range(len(dset['elec'])):
@@ -474,9 +489,13 @@ def run_prediction(model, dset, dset_name, labs, normal_mode=True):
         nwk = ele.shape[0]
         ts = np.arange(dset['time'][i], dset['time'][i] + 1, 1 / nwk)
         gdp_prev = np.repeat(dset['gdp_prev'][i], nwk)
+        isw = np.repeat(input_switch, nwk)
+        isc = np.repeat(input_switch_complement, nwk)
+        enc_inp = np.repeat(enc_input, nwk, axis=0)
+        
 
         preds = model.predict([ele, ts, gdp_prev, gas, pet,
-                               input_switch, input_switch_complement, enc_input], batch_size=1)
+                               isw, isc, enc_inp], batch_size=1)
         pred = preds[0]
         pred = unstandardize(dset['gdp'], pred.mean()).round(6)
         decoder_outs[i] = preds[1]
@@ -484,7 +503,7 @@ def run_prediction(model, dset, dset_name, labs, normal_mode=True):
         residuals[i] = pred - unstandardize(dset['gdp'], labs[i])
         print(f'Predicted: ${pred}\tActual: ${unstandardize(dset["gdp"], labs[i])}')
 
-    return (predictions, residuals)
+    return (predictions, residuals, decoder_outs)
 
 
 def get_args():

@@ -8,7 +8,7 @@ eiafcst/data/raw_data/temperature/*.nc
 
 eiafcst/models/diagnostic/*[.png, .csv]
 
-
+slurm*.out
 
 # OSX files
 .DS_Store
