@@ -435,6 +435,8 @@ def compile_model(model, o1, o2, w1, w2, lr):
                   metrics=['mean_absolute_error', 'mean_squared_error'])
     return model
 
+def encoder_shape(model):
+    return list(get_layer_by_name(model,'EncoderInput').input_shape)
 
 def run_prediction(model, dset, dset_name, labs, normal_mode=True):
     """
@@ -448,7 +450,7 @@ def run_prediction(model, dset, dset_name, labs, normal_mode=True):
     predictions = np.empty(len(dset['elec']))
     residuals = np.empty(len(dset['elec']))
     decoder_outs = [None]*len(dset['elec'])
-    encoder_input_shape = list(get_layer_by_name(model,'EncoderInput').input_shape)
+    encoder_input_shape = encoder_shape(model)
     
     print(f'encoder input length:  {len(dset["elec"])}')
     print(f'encoder input shape: {encoder_input_shape}')    
