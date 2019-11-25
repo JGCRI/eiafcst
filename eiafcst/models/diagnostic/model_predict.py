@@ -12,14 +12,14 @@ import numpy as np
 import sys
 import os
 
-from eiafcst.models.model_gdp import load_inputs
+from eiafcst.models.model_gdp import load_inputs, run_prediction
 import eiafcst.models.diagnostic.plot_model_predictions as predict
 
 def get_prediction_and_data(filename):
 
     model = keras.models.load_model(filename)
 
-    train, dev, test = predict.load_inputs(['train','dev','test'])
+    train, dev, test = load_inputs(['train','dev','test'])
 
     data_order = np.argsort(np.concatenate([train['time'], dev['time'], test['time']]))
 
